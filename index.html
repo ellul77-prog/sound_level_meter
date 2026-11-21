@@ -37,6 +37,13 @@
   .tabs button.active{background:var(--accent);color:#06211e;border-color:var(--accent);}
   .tabs.view button.active{background:var(--accent2);border-color:var(--accent2);}
 
+  .peakRow{display:flex;gap:6px;}
+  .peakbtn{flex:1;padding:8px 6px;border-radius:10px;border:1px solid #ffffff;
+    background:transparent;color:#ffffff;font-size:14px;font-weight:700;}
+  .peakbtn.hasMarkers{background:#ffffff;color:#0f1115;}
+  .clearbtn{flex:none;padding:8px 14px;border-radius:10px;border:1px solid var(--line);
+    background:var(--panel2);color:var(--fg-dim);font-size:14px;font-weight:700;}
+
   .statsHeader{font-size:14px;color:var(--fg-dim);text-align:center;margin-bottom:6px;font-weight:600;}
   .statsGrid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;}
   .stat{text-align:center;}
@@ -44,14 +51,15 @@
   .statValue{font-size:30px;font-weight:800;font-variant-numeric:tabular-nums;color:var(--accent2);
     line-height:1.15;}
 
-  .settingsRow{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;}
+  .settingsRow{display:flex;align-items:center;justify-content:space-between;gap:8px 12px;flex-wrap:wrap;}
   .field{display:flex;align-items:center;gap:7px;}
-  .field label{font-size:14px;color:var(--fg-dim);white-space:nowrap;font-weight:600;}
+  .field label{font-size:16px;color:var(--fg-dim);white-space:nowrap;font-weight:600;}
   select, input[type=number]{
     background:var(--panel2);color:var(--fg);border:1px solid var(--line);
-    border-radius:8px;padding:7px 8px;font-size:15px;min-width:0;
+    border-radius:8px;padding:6px 8px;font-size:19px;min-width:0;font-variant-numeric:tabular-nums;
   }
-  input[type=number]#calibOffset{width:70px;text-align:right;}
+  input[type=number]#calibOffset{width:84px;text-align:right;}
+  .deltaFHint{font-size:14px;color:var(--fg-dim);font-variant-numeric:tabular-nums;white-space:nowrap;}
   .switch{position:relative;display:inline-block;width:44px;height:26px;flex:none;}
   .switch input{opacity:0;width:0;height:0;}
   .slider{position:absolute;inset:0;background:var(--panel2);border:1px solid var(--line);
@@ -84,7 +92,11 @@
       </div>
       <div class="tabs view" id="viewTabs">
         <button id="viewInstant" class="active" data-view="instant">Instantaneous</button>
-        <button id="viewAvg" data-view="avg">평균 스펙트럼</button>
+        <button id="viewAvg" data-view="avg">Time Average</button>
+      </div>
+      <div class="peakRow">
+        <button id="peakBtn" class="peakbtn">Peak Picking</button>
+        <button id="peakClearBtn" class="clearbtn">Clear</button>
       </div>
     </div>
   </div>
@@ -117,26 +129,17 @@
           <option value="4000" selected>20 – 4k Hz</option>
           <option value="10000">20 – 10k Hz</option>
         </select>
-      </div>
-      <div class="field" id="deltaFField">
-        <label for="deltaF">Δf</label>
-        <select id="deltaF">
-          <option value="2048">≈21.5 Hz</option>
-          <option value="4096">≈10.8 Hz</option>
-          <option value="8192">≈5.4 Hz</option>
-          <option value="16384" selected>≈2.7 Hz</option>
-          <option value="32768">≈1.3 Hz</option>
-        </select>
+        <span class="deltaFHint" id="deltaFHint">Δf≈10.8 Hz</span>
       </div>
       <div class="field">
-        <label for="aWeight">A-W</label>
+        <label for="aWeight">A Weighting</label>
         <label class="switch">
           <input type="checkbox" id="aWeight">
           <span class="slider"></span>
         </label>
       </div>
       <div class="field">
-        <label for="calibOffset">보정(dB)</label>
+        <label for="calibOffset">Calibration(dB)</label>
         <input type="number" id="calibOffset" value="120" step="0.1">
       </div>
     </div>
@@ -161,8 +164,12 @@
   const BAND_FACTOR = Math.pow(2, 1/6);
   const MAX_HISTORY = 200000;
 
+  // Range ≤1k Hz → Δf≈1 Hz, 4k/10k Hz → Δf≈10 Hz (FFT 크기는 2의 거듭제곱)
+  function fftSizeForRange(freq){ return freq <= 1000 ? 32768 : 4096; }
+
   // ---------- state ----------
-  let FFT_SIZE = 16384;
+  let maxFreq = 4000;
+  let FFT_SIZE = fftSizeForRange(maxFreq);
   let HOP = FFT_SIZE / 2;              // 50% overlap
   let ringBuffer = new Float32Array(FFT_SIZE);
   let windowCoeffs = null;
@@ -172,7 +179,6 @@
   let running = false;
   let mode = "narrow";      // "narrow" | "octave"
   let viewMode = "instant"; // "instant" | "avg"
-  let maxFreq = 4000;
   let aWeight = false;
   let calibOffset = 120;
 
@@ -183,8 +189,10 @@
   // per-frame history: [{narrow:[e500,e1k,e4k,e10k], octave:[e500,e1k,e4k,e10k]}], raw energy (no calibOffset)
   let levelHistory = [];
   let avgCount = 0;
-  let binCumEnergy = new Float64Array(FFT_SIZE/2);          // 누적 raw energy per FFT bin
-  let bandCumEnergy = new Float64Array(THIRD_OCTAVE_CENTERS.length); // 누적 raw energy per 1/3 oct band
+  let binCumEnergy = new Float64Array(FFT_SIZE/2);
+  let bandCumEnergy = new Float64Array(THIRD_OCTAVE_CENTERS.length);
+
+  let peakMarkers = [];       // [{mode, freq, db}]
 
   // ---------- DOM ----------
   const $ = (id) => document.getElementById(id);
@@ -194,9 +202,10 @@
   const tabOctave = $("tabOctave");
   const viewInstant = $("viewInstant");
   const viewAvg = $("viewAvg");
-  const deltaFField = $("deltaFField");
-  const deltaFSel = $("deltaF");
+  const peakBtn = $("peakBtn");
+  const peakClearBtn = $("peakClearBtn");
   const freqRangeSel = $("freqRange");
+  const deltaFHint = $("deltaFHint");
   const aWeightChk = $("aWeight");
   const calibInput = $("calibOffset");
   const statsRangeLabel = $("statsRangeLabel");
@@ -216,6 +225,17 @@
     avgCount = 0;
     binCumEnergy = new Float64Array(FFT_SIZE/2);
     bandCumEnergy = new Float64Array(THIRD_OCTAVE_CENTERS.length);
+    peakMarkers = [];
+    refreshPeakBtnState();
+  }
+
+  function refreshDeltaFHint(){
+    const df = latestSampleRate / FFT_SIZE;
+    deltaFHint.textContent = "Δf≈" + (df < 10 ? df.toFixed(2) : df.toFixed(1)) + " Hz";
+  }
+
+  function refreshPeakBtnState(){
+    peakBtn.classList.toggle("hasMarkers", peakMarkers.some(m => m.mode === mode));
   }
 
   // ---------- Hanning window ----------
@@ -240,6 +260,7 @@
     samplesSinceLastFFT = 0;
     latestAmps = null;
     resetHistory();
+    refreshDeltaFHint();
   }
 
   // ---------- in-place radix-2 FFT ----------
@@ -391,6 +412,8 @@
       const AC = window.AudioContext || window.webkitAudioContext;
       audioCtx = new AC();
       await audioCtx.resume();
+      latestSampleRate = audioCtx.sampleRate;
+      refreshDeltaFHint();
 
       const win = buildWindow(FFT_SIZE);
       windowCoeffs = win.w;
@@ -468,6 +491,62 @@
     return idxs;
   }
 
+  function hasData(useAvg){
+    return useAvg ? avgCount > 0 : !!latestAmps;
+  }
+
+  // dB values currently shown on the narrow chart (instant or time average)
+  function narrowDbArray(loIdx, hiIdx, sr, useAvg){
+    const n = hiIdx - loIdx + 1;
+    const dbArr = new Float32Array(n);
+    for (let i=0;i<n;i++){
+      const k = loIdx+i;
+      const energy = useAvg
+        ? binCumEnergy[k] / avgCount
+        : (latestAmps[k] > 0 ? Math.pow(10, levelRawAt(latestAmps, k, sr)/10) : 0);
+      dbArr[i] = energy > 0 ? 10*Math.log10(energy) + calibOffset : -160;
+    }
+    return dbArr;
+  }
+
+  // dB values currently shown on the octave chart, for the visible band indices
+  function octaveDbArray(idxs, sr, useAvg){
+    if (useAvg){
+      return idxs.map(i => {
+        const e = bandCumEnergy[i] / avgCount;
+        return e > 0 ? 10*Math.log10(e) + calibOffset : -160;
+      });
+    }
+    const { dbsRaw } = computeOctaveBandsRaw(latestAmps, sr);
+    return idxs.map(i => dbsRaw[i] + calibOffset);
+  }
+
+  function getCurrentPeak(){
+    const useAvg = (viewMode === "avg");
+    if (!hasData(useAvg)) return null;
+    const sr = latestSampleRate;
+    if (mode === "narrow"){
+      const { loIdx, hiIdx } = narrowBinRange();
+      const dbArr = narrowDbArray(loIdx, hiIdx, sr, useAvg);
+      let best = 0;
+      for (let i=1;i<dbArr.length;i++) if (dbArr[i] > dbArr[best]) best = i;
+      return { freq: (loIdx+best) * sr / FFT_SIZE, db: dbArr[best] };
+    }
+    const idxs = visibleOctaveIndices();
+    const dbs = octaveDbArray(idxs, sr, useAvg);
+    let best = 0;
+    for (let i=1;i<dbs.length;i++) if (dbs[i] > dbs[best]) best = i;
+    return { freq: THIRD_OCTAVE_CENTERS[idxs[best]], db: dbs[best] };
+  }
+
+  function formatFreqLabel(f){
+    if (f >= 1000){
+      const kv = f/1000;
+      return (Number.isInteger(kv) ? kv : kv.toFixed(2).replace(/0$/,"")) + "k Hz";
+    }
+    return (f < 100 ? f.toFixed(1).replace(/\.0$/,"") : Math.round(f)) + " Hz";
+  }
+
   // ---------- drawing ----------
   function resizeCanvas(){
     const rect = canvas.getBoundingClientRect();
@@ -477,6 +556,11 @@
     if (canvas.width !== w || canvas.height !== h){
       canvas.width = w; canvas.height = h;
     }
+  }
+
+  // font size scaled to CSS pixels, so labels look the same size on every screen
+  function px(cssPx){
+    return (cssPx * (window.devicePixelRatio || 1)).toFixed(1) + "px -apple-system, sans-serif";
   }
 
   function niceRange(values){
@@ -492,41 +576,67 @@
     return [mn, mx];
   }
 
-  function drawNarrow(useAvg){
+  function plotBox(padBRatio){
     const w = canvas.width, h = canvas.height;
+    const dpr = window.devicePixelRatio || 1;
+    const padL = 34*dpr, padR = 10*dpr, padT = 10*dpr, padB = padBRatio*dpr;
+    return { w, h, padL, padR, padT, padB, plotW: w-padL-padR, plotH: h-padT-padB };
+  }
+
+  function drawPeakMarkers(box, freqToX){
+    const dpr = window.devicePixelRatio || 1;
+    ctx2d.save();
+    ctx2d.lineWidth = 1.5*dpr;
+    ctx2d.font = "bold " + px(14);
+    for (const m of peakMarkers){
+      if (m.mode !== mode) continue;
+      const x = freqToX(m.freq);
+      if (x == null) continue;
+      ctx2d.strokeStyle = "#ffffff";
+      ctx2d.setLineDash([5*dpr, 4*dpr]);
+      ctx2d.beginPath();
+      ctx2d.moveTo(x, box.padT);
+      ctx2d.lineTo(x, box.padT + box.plotH);
+      ctx2d.stroke();
+      ctx2d.setLineDash([]);
+      const label = formatFreqLabel(m.freq);
+      const rightSide = x > box.padL + box.plotW*0.7;
+      ctx2d.textAlign = rightSide ? "right" : "left";
+      const tx = x + (rightSide ? -5*dpr : 5*dpr);
+      const ty = box.padT + 16*dpr;
+      const tw = ctx2d.measureText(label).width;
+      ctx2d.fillStyle = "rgba(15,17,21,0.85)";
+      ctx2d.fillRect(rightSide ? tx - tw - 3*dpr : tx - 3*dpr, ty - 14*dpr, tw + 6*dpr, 19*dpr);
+      ctx2d.fillStyle = "#ffffff";
+      ctx2d.fillText(label, tx, ty);
+    }
+    ctx2d.restore();
+  }
+
+  function drawNarrow(useAvg){
+    const box = plotBox(26);
+    const { w, h, padL, padT, plotW, plotH } = box;
     ctx2d.clearRect(0,0,w,h);
     ctx2d.fillStyle = "#1e222b";
     ctx2d.fillRect(0,0,w,h);
 
-    if (useAvg && avgCount === 0){ drawEmpty("평균 스펙트럼 수집 중..."); return; }
-    if (!useAvg && !latestAmps){ drawEmpty(); return; }
+    if (!hasData(useAvg)){ drawEmpty(useAvg ? "Time Average 수집 중..." : null); return; }
 
     const sr = latestSampleRate;
     const { loIdx, hiIdx } = narrowBinRange();
-    const n = hiIdx - loIdx + 1;
-    const dbArr = new Float32Array(n);
-    for (let i=0;i<n;i++){
-      const k = loIdx+i;
-      let energy;
-      if (useAvg){
-        energy = binCumEnergy[k] / avgCount;
-      } else {
-        energy = latestAmps[k] > 0 ? Math.pow(10, levelRawAt(latestAmps, k, sr)/10) : 0;
-      }
-      dbArr[i] = energy > 0 ? 10*Math.log10(energy) + calibOffset : -160;
-    }
+    const fLo = loIdx*sr/FFT_SIZE, fHi = hiIdx*sr/FFT_SIZE;
+    const dbArr = narrowDbArray(loIdx, hiIdx, sr, useAvg);
+    const n = dbArr.length;
     const [yMin,yMax] = niceRange(dbArr);
 
-    drawGridY(yMin,yMax,0.16);
-    drawFreqAxisLinear(loIdx, hiIdx, sr, 0.16);
+    drawGridY(box, yMin, yMax);
+    drawFreqAxisLinear(box, fLo, fHi);
 
     ctx2d.beginPath();
     ctx2d.strokeStyle = useAvg ? "#f6ad55" : "#4fd1c5";
-    ctx2d.lineWidth = Math.max(1, w/700);
-    const padL = 0.09*w, padR = 0.02*w, padT = 0.06*h, padB = 0.16*h;
-    const plotW = w - padL - padR, plotH = h - padT - padB;
+    ctx2d.lineWidth = 1.5*(window.devicePixelRatio || 1);
     for (let i=0;i<n;i++){
-      const x = padL + (i/(n-1))*plotW;
+      const x = padL + (n > 1 ? i/(n-1) : 0)*plotW;
       const yNorm = (dbArr[i]-yMin)/(yMax-yMin);
       const y = padT + plotH*(1-Math.min(1,Math.max(0,yNorm)));
       if (i===0) ctx2d.moveTo(x,y); else ctx2d.lineTo(x,y);
@@ -537,80 +647,80 @@
     ctx2d.closePath();
     ctx2d.fillStyle = useAvg ? "rgba(246,173,85,0.14)" : "rgba(79,209,197,0.12)";
     ctx2d.fill();
+
+    drawPeakMarkers(box, (f) => (f < fLo || f > fHi) ? null : padL + ((f-fLo)/(fHi-fLo))*plotW);
   }
 
   function drawOctave(useAvg){
-    const w = canvas.width, h = canvas.height;
+    const box = plotBox(40);
+    const { w, h, padL, padT, plotW, plotH } = box;
+    const dpr = window.devicePixelRatio || 1;
     ctx2d.clearRect(0,0,w,h);
     ctx2d.fillStyle = "#1e222b";
     ctx2d.fillRect(0,0,w,h);
 
-    if (useAvg && avgCount === 0){ drawEmpty("평균 스펙트럼 수집 중..."); return; }
-    if (!useAvg && !latestAmps){ drawEmpty(); return; }
+    if (!hasData(useAvg)){ drawEmpty(useAvg ? "Time Average 수집 중..." : null); return; }
 
     const sr = latestSampleRate;
     const idxs = visibleOctaveIndices();
-    let dbs;
-    if (useAvg){
-      dbs = idxs.map(i => {
-        const e = bandCumEnergy[i] / avgCount;
-        return e > 0 ? 10*Math.log10(e) + calibOffset : -160;
-      });
-    } else {
-      const { dbsRaw } = computeOctaveBandsRaw(latestAmps, sr);
-      dbs = idxs.map(i => dbsRaw[i] + calibOffset);
-    }
+    const dbs = octaveDbArray(idxs, sr, useAvg);
     const [yMin,yMax] = niceRange(dbs);
 
-    drawGridY(yMin,yMax,0.22);
+    drawGridY(box, yMin, yMax);
 
-    const padL = 0.09*w, padR = 0.02*w, padT = 0.06*h, padB = 0.22*h;
-    const plotW = w - padL - padR, plotH = h - padT - padB;
     const nBands = idxs.length;
-    const gap = plotW/nBands*0.18;
-    const bw = plotW/nBands - gap;
+    const slot = plotW/nBands;
+    const gap = slot*0.18;
+    const bw = slot - gap;
+    const labelEvery = nBands > 16 ? 2 : 1;
 
-    ctx2d.font = (10*(w/800)).toFixed(1) + "px -apple-system, sans-serif";
-    ctx2d.textAlign = "center";
-
+    ctx2d.font = px(12);
     for (let b=0;b<nBands;b++){
-      const x0 = padL + b*(plotW/nBands) + gap/2;
+      const x0 = padL + b*slot + gap/2;
       const yNorm = (dbs[b]-yMin)/(yMax-yMin);
       const yTop = padT + plotH*(1-Math.min(1,Math.max(0,yNorm)));
       ctx2d.fillStyle = useAvg ? "#f6ad55" : "#4fd1c5";
       ctx2d.fillRect(x0, yTop, bw, padT+plotH-yTop);
 
-      const fc = THIRD_OCTAVE_CENTERS[idxs[b]];
-      const label = fc>=1000 ? (fc/1000)+"k" : String(fc);
-      if (b % 2 === 0 || nBands<=16){
+      if (b % labelEvery === 0){
+        const fc = THIRD_OCTAVE_CENTERS[idxs[b]];
+        const label = fc>=1000 ? (fc/1000)+"k" : String(fc);
         ctx2d.save();
-        ctx2d.fillStyle = "#9aa3b2";
-        ctx2d.translate(x0+bw/2, padT+plotH+14*(w/800));
+        ctx2d.fillStyle = "#c3cad6";
+        ctx2d.translate(x0+bw/2, padT+plotH+8*dpr);
         ctx2d.rotate(-Math.PI/3);
         ctx2d.textAlign = "right";
+        ctx2d.textBaseline = "middle";
         ctx2d.fillText(label, 0, 0);
         ctx2d.restore();
       }
     }
+
+    drawPeakMarkers(box, (f) => {
+      const p = idxs.indexOf(THIRD_OCTAVE_CENTERS.indexOf(f));
+      return p < 0 ? null : padL + p*slot + slot/2;
+    });
   }
 
   function drawEmpty(msg){
     const w=canvas.width,h=canvas.height;
     ctx2d.fillStyle="#9aa3b2";
-    ctx2d.font=(15*(w/800)).toFixed(1)+"px -apple-system, sans-serif";
+    ctx2d.font=px(16);
     ctx2d.textAlign="center";
+    ctx2d.textBaseline="middle";
     ctx2d.fillText(msg || "Start를 눌러 측정을 시작하세요", w/2, h/2);
+    ctx2d.textBaseline="alphabetic";
   }
 
-  function drawGridY(yMin,yMax,padBRatio){
-    const w = canvas.width, h = canvas.height;
-    const padL = 0.09*w, padR = 0.02*w, padT = 0.06*h, padB = padBRatio*h;
-    const plotW = w - padL - padR, plotH = h - padT - padB;
+  function drawGridY(box, yMin, yMax){
+    const { padL, padT, plotW, plotH } = box;
+    const dpr = window.devicePixelRatio || 1;
     ctx2d.strokeStyle = "#2a2f3a";
     ctx2d.lineWidth = 1;
-    ctx2d.fillStyle = "#9aa3b2";
-    ctx2d.font = (11*(w/800)).toFixed(1) + "px -apple-system, sans-serif";
-    ctx2d.textAlign = "left";
+    ctx2d.fillStyle = "#c3cad6";
+    ctx2d.font = px(13);
+    ctx2d.textAlign = "right";
+    ctx2d.textBaseline = "middle";
     const steps = 5;
     for (let i=0;i<=steps;i++){
       const v = yMin + (yMax-yMin)*(i/steps);
@@ -618,25 +728,26 @@
       ctx2d.beginPath();
       ctx2d.moveTo(padL,y); ctx2d.lineTo(padL+plotW,y);
       ctx2d.stroke();
-      ctx2d.fillText(v.toFixed(0), 2, y+3);
+      ctx2d.fillText(v.toFixed(0), padL - 4*dpr, y);
     }
+    ctx2d.textBaseline = "alphabetic";
   }
 
-  function drawFreqAxisLinear(loIdx, hiIdx, sr, padBRatio){
-    const w = canvas.width, h = canvas.height;
-    const padL = 0.09*w, padR = 0.02*w, padT = 0.06*h, padB = padBRatio*h;
-    const plotW = w - padL - padR, plotH = h - padT - padB;
-    const fLo = loIdx*sr/FFT_SIZE, fHi = hiIdx*sr/FFT_SIZE;
-    ctx2d.fillStyle = "#9aa3b2";
-    ctx2d.font = (11*(w/800)).toFixed(1) + "px -apple-system, sans-serif";
-    ctx2d.textAlign = "center";
-    const steps = 5;
+  function drawFreqAxisLinear(box, fLo, fHi){
+    const { padL, padT, plotW, plotH } = box;
+    const dpr = window.devicePixelRatio || 1;
+    ctx2d.fillStyle = "#c3cad6";
+    ctx2d.font = px(13);
+    ctx2d.textBaseline = "top";
+    const steps = 4;
     for (let i=0;i<=steps;i++){
       const f = fLo + (fHi-fLo)*(i/steps);
       const x = padL + plotW*(i/steps);
-      const label = f>=1000 ? (f/1000).toFixed(1).replace(/\.0$/,"")+"k" : Math.round(f);
-      ctx2d.fillText(label, x, padT+plotH+14*(w/800));
+      const label = f>=1000 ? (f/1000).toFixed(1).replace(/\.0$/,"")+"k" : String(Math.round(f));
+      ctx2d.textAlign = i === 0 ? "left" : (i === steps ? "right" : "center");
+      ctx2d.fillText(label, x, padT+plotH+5*dpr);
     }
+    ctx2d.textBaseline = "alphabetic";
   }
 
   function updateStats(){
@@ -687,7 +798,7 @@
     mode = m;
     tabNarrow.classList.toggle("active", m==="narrow");
     tabOctave.classList.toggle("active", m==="octave");
-    deltaFField.style.display = m==="narrow" ? "flex" : "none";
+    refreshPeakBtnState();
     if (!running){ drawLoop(); }
   }
   tabNarrow.addEventListener("click", () => setMode("narrow"));
@@ -702,12 +813,23 @@
   viewInstant.addEventListener("click", () => setViewMode("instant"));
   viewAvg.addEventListener("click", () => setViewMode("avg"));
 
-  freqRangeSel.addEventListener("change", () => {
-    maxFreq = parseInt(freqRangeSel.value, 10);
+  peakBtn.addEventListener("click", () => {
+    const peak = getCurrentPeak();
+    if (!peak) return;
+    peakMarkers.push({ mode, freq: peak.freq, db: peak.db });
+    refreshPeakBtnState();
     if (!running) drawLoop();
   });
-  deltaFSel.addEventListener("change", () => {
-    applyFftSize(parseInt(deltaFSel.value, 10));
+  peakClearBtn.addEventListener("click", () => {
+    peakMarkers = [];
+    refreshPeakBtnState();
+    if (!running) drawLoop();
+  });
+
+  freqRangeSel.addEventListener("change", () => {
+    maxFreq = parseInt(freqRangeSel.value, 10);
+    const needed = fftSizeForRange(maxFreq);
+    if (needed !== FFT_SIZE) applyFftSize(needed);
     if (!running) drawLoop();
   });
   aWeightChk.addEventListener("change", () => {
@@ -724,6 +846,7 @@
   window.addEventListener("resize", () => { if(!running) drawLoop(); });
 
   // initial paint
+  refreshDeltaFHint();
   setMode("narrow");
   drawLoop();
 })();
