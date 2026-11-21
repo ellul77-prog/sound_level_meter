@@ -1,0 +1,732 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+<title>Sound Level Meter</title>
+<style>
+  :root{
+    --bg:#0f1115; --panel:#171a21; --panel2:#1e222b; --line:#2a2f3a;
+    --fg:#e8eaf0; --fg-dim:#9aa3b2; --accent:#4fd1c5; --accent2:#f6ad55;
+    --warn:#f06565; --good:#4fd17a;
+  }
+  *{box-sizing:border-box;}
+  html,body{height:100%;margin:0;}
+  body{
+    background:var(--bg);color:var(--fg);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+    display:flex;flex-direction:column;gap:7px;
+    min-height:100vh;min-height:100dvh;
+    overflow:hidden;
+    -webkit-tap-highlight-color:transparent;
+    padding:max(8px, env(safe-area-inset-top,0px)) max(14px, env(safe-area-inset-right,0px))
+            max(8px, env(safe-area-inset-bottom,0px)) max(14px, env(safe-area-inset-left,0px));
+  }
+  h1{font-size:28px;font-weight:800;margin:2px 0 0;letter-spacing:.2px;flex:none;}
+
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;
+    padding:9px 11px;flex:none;}
+
+  .chartcard{flex:1 1 auto;min-height:0;display:flex;flex-direction:column;gap:7px;}
+  canvas{width:100%;flex:1;min-height:0;display:block;border-radius:10px;background:var(--panel2);}
+
+  .chartControls{display:flex;flex-direction:column;gap:6px;flex:none;}
+  .tabs{display:flex;gap:6px;}
+  .tabs button{flex:1;padding:8px 6px;border-radius:10px;border:1px solid var(--line);
+    background:var(--panel2);color:var(--fg-dim);font-size:14px;font-weight:700;}
+  .tabs button.active{background:var(--accent);color:#06211e;border-color:var(--accent);}
+  .tabs.view button.active{background:var(--accent2);border-color:var(--accent2);}
+
+  .statsHeader{font-size:14px;color:var(--fg-dim);text-align:center;margin-bottom:6px;font-weight:600;}
+  .statsGrid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;}
+  .stat{text-align:center;}
+  .statLabel{font-size:14px;color:var(--fg-dim);font-weight:800;letter-spacing:.5px;}
+  .statValue{font-size:30px;font-weight:800;font-variant-numeric:tabular-nums;color:var(--accent2);
+    line-height:1.15;}
+
+  .settingsRow{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;}
+  .field{display:flex;align-items:center;gap:7px;}
+  .field label{font-size:14px;color:var(--fg-dim);white-space:nowrap;font-weight:600;}
+  select, input[type=number]{
+    background:var(--panel2);color:var(--fg);border:1px solid var(--line);
+    border-radius:8px;padding:7px 8px;font-size:15px;min-width:0;
+  }
+  input[type=number]#calibOffset{width:70px;text-align:right;}
+  .switch{position:relative;display:inline-block;width:44px;height:26px;flex:none;}
+  .switch input{opacity:0;width:0;height:0;}
+  .slider{position:absolute;inset:0;background:var(--panel2);border:1px solid var(--line);
+    border-radius:26px;transition:.15s;}
+  .slider:before{content:"";position:absolute;width:20px;height:20px;left:2px;top:2px;
+    background:var(--fg-dim);border-radius:50%;transition:.15s;}
+  .switch input:checked + .slider{background:var(--accent);border-color:var(--accent);}
+  .switch input:checked + .slider:before{transform:translateX(18px);background:#06211e;}
+
+  .status{font-size:13px;color:var(--fg-dim);min-height:16px;text-align:center;flex:none;}
+  .status.err{color:var(--warn);}
+  .status.ok{color:var(--good);}
+
+  .startstop{
+    width:100%;padding:13px;border:none;border-radius:14px;font-size:19px;font-weight:800;
+    background:var(--accent);color:#06211e;letter-spacing:.3px;flex:none;
+  }
+  .startstop.running{background:var(--warn);color:#2a0606;}
+</style>
+</head>
+<body>
+  <h1>Sound Level Meter</h1>
+
+  <div class="card chartcard">
+    <canvas id="chart" width="800" height="440"></canvas>
+    <div class="chartControls">
+      <div class="tabs" id="modeTabs">
+        <button id="tabNarrow" class="active" data-mode="narrow">Narrow (FFT)</button>
+        <button id="tabOctave" data-mode="octave">1/3 Octave Band</button>
+      </div>
+      <div class="tabs view" id="viewTabs">
+        <button id="viewInstant" class="active" data-view="instant">Instantaneous</button>
+        <button id="viewAvg" data-view="avg">평균 스펙트럼</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="statsHeader" id="statsRangeLabel">20 Hz – 4k Hz</div>
+    <div class="statsGrid">
+      <div class="stat">
+        <div class="statLabel">Leq</div>
+        <div class="statValue" id="leqValue">--</div>
+      </div>
+      <div class="stat">
+        <div class="statLabel">Lmax</div>
+        <div class="statValue" id="lmaxValue">--</div>
+      </div>
+      <div class="stat">
+        <div class="statLabel">L10</div>
+        <div class="statValue" id="l10Value">--</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="settingsRow">
+      <div class="field">
+        <label for="freqRange">Range</label>
+        <select id="freqRange">
+          <option value="500">20 – 500 Hz</option>
+          <option value="1000">20 – 1k Hz</option>
+          <option value="4000" selected>20 – 4k Hz</option>
+          <option value="10000">20 – 10k Hz</option>
+        </select>
+      </div>
+      <div class="field" id="deltaFField">
+        <label for="deltaF">Δf</label>
+        <select id="deltaF">
+          <option value="2048">≈21.5 Hz</option>
+          <option value="4096">≈10.8 Hz</option>
+          <option value="8192">≈5.4 Hz</option>
+          <option value="16384" selected>≈2.7 Hz</option>
+          <option value="32768">≈1.3 Hz</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="aWeight">A-W</label>
+        <label class="switch">
+          <input type="checkbox" id="aWeight">
+          <span class="slider"></span>
+        </label>
+      </div>
+      <div class="field">
+        <label for="calibOffset">보정(dB)</label>
+        <input type="number" id="calibOffset" value="120" step="0.1">
+      </div>
+    </div>
+  </div>
+
+  <div class="status" id="status"></div>
+  <button id="startStopBtn" class="startstop">Start</button>
+
+<script>
+(function(){
+  "use strict";
+
+  // ---------- constants ----------
+  const LOW_FREQ = 20;                 // 공통 하한 주파수
+  const RANGE_OPTIONS = [500,1000,4000,10000];
+  const PROC_BUF = 4096;               // ScriptProcessor block size
+
+  const THIRD_OCTAVE_CENTERS = [
+    20,25,31.5,40,50,63,80,100,125,160,200,250,315,400,
+    500,630,800,1000,1250,1600,2000,2500,3150,4000,5000,6300,8000,10000
+  ];
+  const BAND_FACTOR = Math.pow(2, 1/6);
+  const MAX_HISTORY = 200000;
+
+  // ---------- state ----------
+  let FFT_SIZE = 16384;
+  let HOP = FFT_SIZE / 2;              // 50% overlap
+  let ringBuffer = new Float32Array(FFT_SIZE);
+  let windowCoeffs = null;
+  let windowSum = 0;
+
+  let audioCtx = null, micStream = null, micSource = null, processor = null, silentGain = null;
+  let running = false;
+  let mode = "narrow";      // "narrow" | "octave"
+  let viewMode = "instant"; // "instant" | "avg"
+  let maxFreq = 4000;
+  let aWeight = false;
+  let calibOffset = 120;
+
+  let samplesSinceLastFFT = 0;
+  let latestAmps = null;      // Float32Array length FFT_SIZE/2, linear peak-amplitude per bin
+  let latestSampleRate = 44100;
+
+  // per-frame history: [{narrow:[e500,e1k,e4k,e10k], octave:[e500,e1k,e4k,e10k]}], raw energy (no calibOffset)
+  let levelHistory = [];
+  let avgCount = 0;
+  let binCumEnergy = new Float64Array(FFT_SIZE/2);          // 누적 raw energy per FFT bin
+  let bandCumEnergy = new Float64Array(THIRD_OCTAVE_CENTERS.length); // 누적 raw energy per 1/3 oct band
+
+  // ---------- DOM ----------
+  const $ = (id) => document.getElementById(id);
+  const startStopBtn = $("startStopBtn");
+  const statusEl = $("status");
+  const tabNarrow = $("tabNarrow");
+  const tabOctave = $("tabOctave");
+  const viewInstant = $("viewInstant");
+  const viewAvg = $("viewAvg");
+  const deltaFField = $("deltaFField");
+  const deltaFSel = $("deltaF");
+  const freqRangeSel = $("freqRange");
+  const aWeightChk = $("aWeight");
+  const calibInput = $("calibOffset");
+  const statsRangeLabel = $("statsRangeLabel");
+  const leqValue = $("leqValue");
+  const lmaxValue = $("lmaxValue");
+  const l10Value = $("l10Value");
+  const canvas = $("chart");
+  const ctx2d = canvas.getContext("2d");
+
+  function setStatus(msg, kind){
+    statusEl.textContent = msg || "";
+    statusEl.className = "status" + (kind ? " " + kind : "");
+  }
+
+  function resetHistory(){
+    levelHistory = [];
+    avgCount = 0;
+    binCumEnergy = new Float64Array(FFT_SIZE/2);
+    bandCumEnergy = new Float64Array(THIRD_OCTAVE_CENTERS.length);
+  }
+
+  // ---------- Hanning window ----------
+  function buildWindow(n){
+    const w = new Float32Array(n);
+    let sum = 0;
+    for (let i = 0; i < n; i++){
+      const v = 0.5 - 0.5 * Math.cos((2*Math.PI*i)/(n-1));
+      w[i] = v;
+      sum += v;
+    }
+    return { w, sum };
+  }
+
+  function applyFftSize(newSize){
+    FFT_SIZE = newSize;
+    HOP = FFT_SIZE / 2;
+    ringBuffer = new Float32Array(FFT_SIZE);
+    const win = buildWindow(FFT_SIZE);
+    windowCoeffs = win.w;
+    windowSum = win.sum;
+    samplesSinceLastFFT = 0;
+    latestAmps = null;
+    resetHistory();
+  }
+
+  // ---------- in-place radix-2 FFT ----------
+  function fft(re, im){
+    const n = re.length;
+    for (let i = 1, j = 0; i < n; i++){
+      let bit = n >> 1;
+      for (; j & bit; bit >>= 1) j ^= bit;
+      j ^= bit;
+      if (i < j){
+        let t = re[i]; re[i] = re[j]; re[j] = t;
+        t = im[i]; im[i] = im[j]; im[j] = t;
+      }
+    }
+    for (let len = 2; len <= n; len <<= 1){
+      const ang = -2*Math.PI/len;
+      const wr = Math.cos(ang), wi = Math.sin(ang);
+      const half = len >> 1;
+      for (let i = 0; i < n; i += len){
+        let curR = 1, curI = 0;
+        for (let k = 0; k < half; k++){
+          const aR = re[i+k], aI = im[i+k];
+          const bR = re[i+k+half]*curR - im[i+k+half]*curI;
+          const bI = re[i+k+half]*curI + im[i+k+half]*curR;
+          re[i+k] = aR + bR; im[i+k] = aI + bI;
+          re[i+k+half] = aR - bR; im[i+k+half] = aI - bI;
+          const nR = curR*wr - curI*wi;
+          const nI = curR*wi + curI*wr;
+          curR = nR; curI = nI;
+        }
+      }
+    }
+  }
+
+  // ---------- A-weighting (IEC 61672), returns dB correction at f(Hz) ----------
+  function aWeightingDb(f){
+    if (f <= 0) return -100;
+    const f2 = f*f;
+    const num = Math.pow(12194,2) * f2 * f2;
+    const den = (f2 + 20.6*20.6) * Math.sqrt((f2+107.7*107.7)*(f2+737.9*737.9)) * (f2 + 12194*12194);
+    const ra = num/den;
+    return 20*Math.log10(ra) + 2.00;
+  }
+
+  function dbFromAmp(amp){
+    if (!(amp > 0)) return -160;
+    return 20*Math.log10(amp);
+  }
+
+  function levelRawAt(amps, k, sr){
+    let ldb = dbFromAmp(amps[k]);
+    if (aWeight) ldb += aWeightingDb(k * sr / FFT_SIZE);
+    return ldb;
+  }
+
+  // ---------- audio processing ----------
+  function computeOctaveBandsRaw(amps, sr){
+    const half = FFT_SIZE/2;
+    const dbsRaw = [];
+    const energiesRaw = [];
+    for (let i = 0; i < THIRD_OCTAVE_CENTERS.length; i++){
+      const fc = THIRD_OCTAVE_CENTERS[i];
+      const flo = fc / BAND_FACTOR;
+      const fhi = fc * BAND_FACTOR;
+      let kLo = Math.max(1, Math.ceil(flo * FFT_SIZE / sr));
+      let kHi = Math.min(half - 1, Math.floor(fhi * FFT_SIZE / sr));
+      if (kHi < kLo) kHi = kLo;
+      let energy = 0;
+      for (let k = kLo; k <= kHi; k++){
+        if (!(amps[k] > 0)) continue;
+        energy += Math.pow(10, levelRawAt(amps, k, sr)/10);
+      }
+      energiesRaw.push(energy);
+      dbsRaw.push(energy > 0 ? 10*Math.log10(energy) : -160);
+    }
+    return { dbsRaw, energiesRaw };
+  }
+
+  function updateAccumulators(amps, sr){
+    const half = FFT_SIZE/2;
+    const loIdx = Math.max(1, Math.round(LOW_FREQ * FFT_SIZE / sr));
+    const hiMax = Math.min(half - 1, Math.round(RANGE_OPTIONS[RANGE_OPTIONS.length-1] * FFT_SIZE / sr));
+
+    let running = 0, ri = 0;
+    const narrowRangeEnergies = [0,0,0,0];
+    for (let k = loIdx; k <= hiMax; k++){
+      let e = 0;
+      if (amps[k] > 0){ e = Math.pow(10, levelRawAt(amps, k, sr)/10); running += e; }
+      binCumEnergy[k] += e;
+      const f = k * sr / FFT_SIZE;
+      while (ri < RANGE_OPTIONS.length && f >= RANGE_OPTIONS[ri]){ narrowRangeEnergies[ri] = running; ri++; }
+    }
+    while (ri < RANGE_OPTIONS.length){ narrowRangeEnergies[ri] = running; ri++; }
+
+    const { energiesRaw } = computeOctaveBandsRaw(amps, sr);
+    let runningO = 0, rio = 0;
+    const octaveRangeEnergies = [0,0,0,0];
+    for (let i = 0; i < energiesRaw.length; i++){
+      bandCumEnergy[i] += energiesRaw[i];
+      runningO += energiesRaw[i];
+      const fc = THIRD_OCTAVE_CENTERS[i];
+      while (rio < RANGE_OPTIONS.length && fc >= RANGE_OPTIONS[rio]){ octaveRangeEnergies[rio] = runningO; rio++; }
+    }
+    while (rio < RANGE_OPTIONS.length){ octaveRangeEnergies[rio] = runningO; rio++; }
+
+    levelHistory.push({ narrow: narrowRangeEnergies, octave: octaveRangeEnergies });
+    if (levelHistory.length > MAX_HISTORY) levelHistory.splice(0, MAX_HISTORY/2);
+    avgCount++;
+  }
+
+  function computeFFTFrame(){
+    const n = FFT_SIZE;
+    const re = new Float32Array(n);
+    const im = new Float32Array(n);
+    for (let i = 0; i < n; i++){
+      re[i] = ringBuffer[i] * windowCoeffs[i];
+    }
+    fft(re, im);
+    const half = n/2;
+    const amps = new Float32Array(half);
+    const norm = 2 / windowSum;
+    for (let k = 0; k < half; k++){
+      const mag = Math.sqrt(re[k]*re[k] + im[k]*im[k]);
+      amps[k] = mag * norm;
+    }
+    latestAmps = amps;
+    latestSampleRate = audioCtx.sampleRate;
+    updateAccumulators(amps, latestSampleRate);
+  }
+
+  function onAudioProcess(e){
+    const input = e.inputBuffer.getChannelData(0);
+    const len = input.length;
+    if (len >= FFT_SIZE){
+      ringBuffer.set(input.subarray(len - FFT_SIZE));
+    } else {
+      ringBuffer.copyWithin(0, len);
+      ringBuffer.set(input, FFT_SIZE - len);
+    }
+    samplesSinceLastFFT += len;
+    while (samplesSinceLastFFT >= HOP){
+      computeFFTFrame();
+      samplesSinceLastFFT -= HOP;
+    }
+  }
+
+  async function start(){
+    try{
+      const AC = window.AudioContext || window.webkitAudioContext;
+      audioCtx = new AC();
+      await audioCtx.resume();
+
+      const win = buildWindow(FFT_SIZE);
+      windowCoeffs = win.w;
+      windowSum = win.sum;
+      ringBuffer = new Float32Array(FFT_SIZE);
+      samplesSinceLastFFT = 0;
+
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: false,
+          noiseSuppression: false,
+          autoGainControl: false,
+          channelCount: 1
+        }
+      });
+      micStream = stream;
+      micSource = audioCtx.createMediaStreamSource(stream);
+
+      processor = audioCtx.createScriptProcessor(PROC_BUF, 1, 1);
+      processor.onaudioprocess = onAudioProcess;
+
+      silentGain = audioCtx.createGain();
+      silentGain.gain.value = 0;
+
+      micSource.connect(processor);
+      processor.connect(silentGain);
+      silentGain.connect(audioCtx.destination);
+
+      resetHistory();
+      running = true;
+      startStopBtn.textContent = "Stop";
+      startStopBtn.classList.add("running");
+      setStatus("측정 중...", "ok");
+      requestAnimationFrame(drawLoop);
+    } catch (err){
+      console.error(err);
+      let msg = "마이크를 시작할 수 없습니다: " + (err && err.message ? err.message : err);
+      if (location.protocol !== "https:" && location.hostname !== "localhost" && location.hostname !== "127.0.0.1"){
+        msg += " (HTTPS 또는 localhost 환경이 필요합니다)";
+      }
+      setStatus(msg, "err");
+      await stop();
+    }
+  }
+
+  async function stop(){
+    running = false;
+    startStopBtn.textContent = "Start";
+    startStopBtn.classList.remove("running");
+    try{
+      if (processor){ processor.disconnect(); processor.onaudioprocess = null; }
+      if (silentGain) silentGain.disconnect();
+      if (micSource) micSource.disconnect();
+      if (micStream) micStream.getTracks().forEach(t => t.stop());
+      if (audioCtx) await audioCtx.close();
+    } catch(e){ /* ignore */ }
+    processor = null; silentGain = null; micSource = null; micStream = null; audioCtx = null;
+    if (statusEl.className.indexOf("err") === -1) setStatus("정지됨");
+  }
+
+  // ---------- level / range helpers ----------
+  function narrowBinRange(){
+    const sr = latestSampleRate;
+    const half = FFT_SIZE/2;
+    const loIdx = Math.max(1, Math.round(LOW_FREQ * FFT_SIZE / sr));
+    const hiIdx = Math.min(half - 1, Math.max(loIdx, Math.round(maxFreq * FFT_SIZE / sr)));
+    return { loIdx, hiIdx };
+  }
+
+  function visibleOctaveIndices(){
+    const idxs = [];
+    for (let i = 0; i < THIRD_OCTAVE_CENTERS.length; i++){
+      if (THIRD_OCTAVE_CENTERS[i] <= maxFreq) idxs.push(i);
+    }
+    return idxs;
+  }
+
+  // ---------- drawing ----------
+  function resizeCanvas(){
+    const rect = canvas.getBoundingClientRect();
+    const dpr = window.devicePixelRatio || 1;
+    const w = Math.max(200, Math.round(rect.width * dpr));
+    const h = Math.max(100, Math.round(rect.height * dpr));
+    if (canvas.width !== w || canvas.height !== h){
+      canvas.width = w; canvas.height = h;
+    }
+  }
+
+  function niceRange(values){
+    let mn = Infinity, mx = -Infinity;
+    for (const v of values){
+      if (v === -Infinity || v === Infinity || Number.isNaN(v)) continue;
+      if (v < mn) mn = v;
+      if (v > mx) mx = v;
+    }
+    if (!Number.isFinite(mn) || !Number.isFinite(mx)){ mn = -80; mx = 0; }
+    mn -= 5; mx += 8;
+    if (mx - mn < 20){ const mid=(mx+mn)/2; mn=mid-10; mx=mid+10; }
+    return [mn, mx];
+  }
+
+  function drawNarrow(useAvg){
+    const w = canvas.width, h = canvas.height;
+    ctx2d.clearRect(0,0,w,h);
+    ctx2d.fillStyle = "#1e222b";
+    ctx2d.fillRect(0,0,w,h);
+
+    if (useAvg && avgCount === 0){ drawEmpty("평균 스펙트럼 수집 중..."); return; }
+    if (!useAvg && !latestAmps){ drawEmpty(); return; }
+
+    const sr = latestSampleRate;
+    const { loIdx, hiIdx } = narrowBinRange();
+    const n = hiIdx - loIdx + 1;
+    const dbArr = new Float32Array(n);
+    for (let i=0;i<n;i++){
+      const k = loIdx+i;
+      let energy;
+      if (useAvg){
+        energy = binCumEnergy[k] / avgCount;
+      } else {
+        energy = latestAmps[k] > 0 ? Math.pow(10, levelRawAt(latestAmps, k, sr)/10) : 0;
+      }
+      dbArr[i] = energy > 0 ? 10*Math.log10(energy) + calibOffset : -160;
+    }
+    const [yMin,yMax] = niceRange(dbArr);
+
+    drawGridY(yMin,yMax,0.16);
+    drawFreqAxisLinear(loIdx, hiIdx, sr, 0.16);
+
+    ctx2d.beginPath();
+    ctx2d.strokeStyle = useAvg ? "#f6ad55" : "#4fd1c5";
+    ctx2d.lineWidth = Math.max(1, w/700);
+    const padL = 0.09*w, padR = 0.02*w, padT = 0.06*h, padB = 0.16*h;
+    const plotW = w - padL - padR, plotH = h - padT - padB;
+    for (let i=0;i<n;i++){
+      const x = padL + (i/(n-1))*plotW;
+      const yNorm = (dbArr[i]-yMin)/(yMax-yMin);
+      const y = padT + plotH*(1-Math.min(1,Math.max(0,yNorm)));
+      if (i===0) ctx2d.moveTo(x,y); else ctx2d.lineTo(x,y);
+    }
+    ctx2d.stroke();
+    ctx2d.lineTo(padL+plotW, padT+plotH);
+    ctx2d.lineTo(padL, padT+plotH);
+    ctx2d.closePath();
+    ctx2d.fillStyle = useAvg ? "rgba(246,173,85,0.14)" : "rgba(79,209,197,0.12)";
+    ctx2d.fill();
+  }
+
+  function drawOctave(useAvg){
+    const w = canvas.width, h = canvas.height;
+    ctx2d.clearRect(0,0,w,h);
+    ctx2d.fillStyle = "#1e222b";
+    ctx2d.fillRect(0,0,w,h);
+
+    if (useAvg && avgCount === 0){ drawEmpty("평균 스펙트럼 수집 중..."); return; }
+    if (!useAvg && !latestAmps){ drawEmpty(); return; }
+
+    const sr = latestSampleRate;
+    const idxs = visibleOctaveIndices();
+    let dbs;
+    if (useAvg){
+      dbs = idxs.map(i => {
+        const e = bandCumEnergy[i] / avgCount;
+        return e > 0 ? 10*Math.log10(e) + calibOffset : -160;
+      });
+    } else {
+      const { dbsRaw } = computeOctaveBandsRaw(latestAmps, sr);
+      dbs = idxs.map(i => dbsRaw[i] + calibOffset);
+    }
+    const [yMin,yMax] = niceRange(dbs);
+
+    drawGridY(yMin,yMax,0.22);
+
+    const padL = 0.09*w, padR = 0.02*w, padT = 0.06*h, padB = 0.22*h;
+    const plotW = w - padL - padR, plotH = h - padT - padB;
+    const nBands = idxs.length;
+    const gap = plotW/nBands*0.18;
+    const bw = plotW/nBands - gap;
+
+    ctx2d.font = (10*(w/800)).toFixed(1) + "px -apple-system, sans-serif";
+    ctx2d.textAlign = "center";
+
+    for (let b=0;b<nBands;b++){
+      const x0 = padL + b*(plotW/nBands) + gap/2;
+      const yNorm = (dbs[b]-yMin)/(yMax-yMin);
+      const yTop = padT + plotH*(1-Math.min(1,Math.max(0,yNorm)));
+      ctx2d.fillStyle = useAvg ? "#f6ad55" : "#4fd1c5";
+      ctx2d.fillRect(x0, yTop, bw, padT+plotH-yTop);
+
+      const fc = THIRD_OCTAVE_CENTERS[idxs[b]];
+      const label = fc>=1000 ? (fc/1000)+"k" : String(fc);
+      if (b % 2 === 0 || nBands<=16){
+        ctx2d.save();
+        ctx2d.fillStyle = "#9aa3b2";
+        ctx2d.translate(x0+bw/2, padT+plotH+14*(w/800));
+        ctx2d.rotate(-Math.PI/3);
+        ctx2d.textAlign = "right";
+        ctx2d.fillText(label, 0, 0);
+        ctx2d.restore();
+      }
+    }
+  }
+
+  function drawEmpty(msg){
+    const w=canvas.width,h=canvas.height;
+    ctx2d.fillStyle="#9aa3b2";
+    ctx2d.font=(15*(w/800)).toFixed(1)+"px -apple-system, sans-serif";
+    ctx2d.textAlign="center";
+    ctx2d.fillText(msg || "Start를 눌러 측정을 시작하세요", w/2, h/2);
+  }
+
+  function drawGridY(yMin,yMax,padBRatio){
+    const w = canvas.width, h = canvas.height;
+    const padL = 0.09*w, padR = 0.02*w, padT = 0.06*h, padB = padBRatio*h;
+    const plotW = w - padL - padR, plotH = h - padT - padB;
+    ctx2d.strokeStyle = "#2a2f3a";
+    ctx2d.lineWidth = 1;
+    ctx2d.fillStyle = "#9aa3b2";
+    ctx2d.font = (11*(w/800)).toFixed(1) + "px -apple-system, sans-serif";
+    ctx2d.textAlign = "left";
+    const steps = 5;
+    for (let i=0;i<=steps;i++){
+      const v = yMin + (yMax-yMin)*(i/steps);
+      const y = padT + plotH*(1-i/steps);
+      ctx2d.beginPath();
+      ctx2d.moveTo(padL,y); ctx2d.lineTo(padL+plotW,y);
+      ctx2d.stroke();
+      ctx2d.fillText(v.toFixed(0), 2, y+3);
+    }
+  }
+
+  function drawFreqAxisLinear(loIdx, hiIdx, sr, padBRatio){
+    const w = canvas.width, h = canvas.height;
+    const padL = 0.09*w, padR = 0.02*w, padT = 0.06*h, padB = padBRatio*h;
+    const plotW = w - padL - padR, plotH = h - padT - padB;
+    const fLo = loIdx*sr/FFT_SIZE, fHi = hiIdx*sr/FFT_SIZE;
+    ctx2d.fillStyle = "#9aa3b2";
+    ctx2d.font = (11*(w/800)).toFixed(1) + "px -apple-system, sans-serif";
+    ctx2d.textAlign = "center";
+    const steps = 5;
+    for (let i=0;i<=steps;i++){
+      const f = fLo + (fHi-fLo)*(i/steps);
+      const x = padL + plotW*(i/steps);
+      const label = f>=1000 ? (f/1000).toFixed(1).replace(/\.0$/,"")+"k" : Math.round(f);
+      ctx2d.fillText(label, x, padT+plotH+14*(w/800));
+    }
+  }
+
+  function updateStats(){
+    const hiLabel = maxFreq>=1000 ? (maxFreq/1000)+"k" : maxFreq;
+    const rangeLabel = (LOW_FREQ + " Hz – " + hiLabel + " Hz") + (aWeight ? " · A" : "");
+    statsRangeLabel.textContent = rangeLabel;
+
+    if (levelHistory.length === 0){
+      leqValue.textContent = "--"; lmaxValue.textContent = "--"; l10Value.textContent = "--";
+      return;
+    }
+    const rangeIdx = RANGE_OPTIONS.indexOf(maxFreq);
+    const field = mode;
+    const n = levelHistory.length;
+    const vals = new Float64Array(n);
+    let sum = 0, max = -Infinity;
+    for (let i=0;i<n;i++){
+      const v = levelHistory[i][field][rangeIdx];
+      vals[i] = v;
+      sum += v;
+      if (v > max) max = v;
+    }
+    const leqRaw = sum / n;
+    const sorted = Array.from(vals).sort((a,b) => a-b);
+    let idx = Math.ceil(0.9*sorted.length) - 1;
+    idx = Math.min(sorted.length-1, Math.max(0, idx));
+    const l10Raw = sorted[idx];
+
+    leqValue.textContent = leqRaw > 0 ? (10*Math.log10(leqRaw)+calibOffset).toFixed(1) : "--";
+    lmaxValue.textContent = max > 0 ? (10*Math.log10(max)+calibOffset).toFixed(1) : "--";
+    l10Value.textContent = l10Raw > 0 ? (10*Math.log10(l10Raw)+calibOffset).toFixed(1) : "--";
+  }
+
+  function drawLoop(){
+    resizeCanvas();
+    const useAvg = (viewMode === "avg");
+    if (mode === "narrow") drawNarrow(useAvg); else drawOctave(useAvg);
+    updateStats();
+    if (running || latestAmps || avgCount>0) requestAnimationFrame(drawLoop);
+  }
+
+  // ---------- UI wiring ----------
+  startStopBtn.addEventListener("click", () => {
+    if (!running) start(); else stop();
+  });
+
+  function setMode(m){
+    mode = m;
+    tabNarrow.classList.toggle("active", m==="narrow");
+    tabOctave.classList.toggle("active", m==="octave");
+    deltaFField.style.display = m==="narrow" ? "flex" : "none";
+    if (!running){ drawLoop(); }
+  }
+  tabNarrow.addEventListener("click", () => setMode("narrow"));
+  tabOctave.addEventListener("click", () => setMode("octave"));
+
+  function setViewMode(v){
+    viewMode = v;
+    viewInstant.classList.toggle("active", v==="instant");
+    viewAvg.classList.toggle("active", v==="avg");
+    if (!running){ drawLoop(); }
+  }
+  viewInstant.addEventListener("click", () => setViewMode("instant"));
+  viewAvg.addEventListener("click", () => setViewMode("avg"));
+
+  freqRangeSel.addEventListener("change", () => {
+    maxFreq = parseInt(freqRangeSel.value, 10);
+    if (!running) drawLoop();
+  });
+  deltaFSel.addEventListener("change", () => {
+    applyFftSize(parseInt(deltaFSel.value, 10));
+    if (!running) drawLoop();
+  });
+  aWeightChk.addEventListener("change", () => {
+    aWeight = aWeightChk.checked;
+    resetHistory();
+    if (!running) drawLoop();
+  });
+  calibInput.addEventListener("input", () => {
+    const v = parseFloat(calibInput.value);
+    calibOffset = Number.isFinite(v) ? v : 0;
+    if (!running) drawLoop();
+  });
+
+  window.addEventListener("resize", () => { if(!running) drawLoop(); });
+
+  // initial paint
+  setMode("narrow");
+  drawLoop();
+})();
+</script>
+</body>
+</html>
