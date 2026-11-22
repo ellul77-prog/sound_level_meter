@@ -71,12 +71,15 @@
     border-radius:8px;padding:5px 8px;font-size:17px;font-family:inherit;font-variant-numeric:tabular-nums;}
   .deltaFHint{font-size:13px;color:var(--faint);font-variant-numeric:tabular-nums;white-space:nowrap;}
 
+  /* Range dropdown and Cal. stepper share label and control widths so their edges line up */
+  .field .key{width:62px;flex:none;}
+  #freqRange{width:128px;}
   .stepper{display:inline-flex;align-items:stretch;border:1px solid var(--fieldLine);border-radius:8px;
-    overflow:hidden;background:var(--field);}
+    overflow:hidden;background:var(--field);width:128px;}
   .stepper button{width:32px;border:none;background:#ffffff;color:var(--ink);font-size:19px;font-weight:700;
     line-height:1;padding:0;}
   .stepper button:active{background:var(--line);}
-  .stepper input{width:54px;border:none;border-left:1px solid var(--fieldLine);border-right:1px solid var(--fieldLine);
+  .stepper input{flex:1 1 0;width:0;min-width:0;border:none;border-left:1px solid var(--fieldLine);border-right:1px solid var(--fieldLine);
     border-radius:0;background:var(--field);color:var(--ink);font-size:17px;font-family:inherit;text-align:center;
     padding:5px 2px;font-variant-numeric:tabular-nums;-moz-appearance:textfield;appearance:textfield;}
   .stepper input::-webkit-inner-spin-button,
@@ -152,7 +155,7 @@
   <div class="card settings">
     <div class="setRow">
       <div class="field">
-        <label for="freqRange">Range</label>
+        <label for="freqRange" class="key">Range</label>
         <select id="freqRange">
           <option value="500">20 – 500 Hz</option>
           <option value="1000">20 – 1k Hz</option>
@@ -170,7 +173,7 @@
     </div>
     <div class="setRow">
       <div class="field">
-        <label for="calibOffset">Calibration(dB)</label>
+        <label for="calibOffset" class="key">Cal.(dB)</label>
         <div class="stepper">
           <button id="calDown" aria-label="Calibration 1 dB down">−</button>
           <input type="number" id="calibOffset" value="120" step="1" inputmode="decimal">
@@ -207,6 +210,7 @@
   const MAX_PEAKS = 3;
   const ORDINALS = ["1st","2nd","3rd"];
   const TIMER_STEP = 10, TIMER_MAX = 90;
+  const TAU_SLOW = 1.0;                // Slow time weighting (IEC 61672), seconds
 
   // level histogram for L10: raw dB (before calibration), 0.1 dB steps
   const HIST_MIN = -200, HIST_STEP = 0.1, HIST_BINS = 2500;
@@ -218,10 +222,11 @@
     marker: "#ffffff", tagBg: "#ffffff", tagFg: "#0d1b2e"
   };
 
-  // Range ≤1k Hz → Δf≈1 Hz, 4k/10k Hz → Δf≈10 Hz (FFT size must be a power of two)
-  function fftSizeForRange(freq){ return freq <= 1000 ? 32768 : 4096; }
+  // Range ≤1k Hz → Δf = 1 Hz, 4k/10k Hz → Δf = 10 Hz (FFT size = sample rate / Δf)
+  function fftSizeForRange(freq){ return Math.round(sampleRate / (freq <= 1000 ? 1 : 10)); }
 
   // ---------- state ----------
+  let sampleRate = 44100;
   let maxFreq = 4000;
   let FFT_SIZE = fftSizeForRange(maxFreq);
   let mode = "narrow";      // "narrow" | "octave"
@@ -231,7 +236,6 @@
   let timerSec = 0;         // 0 = Start/Stop
   let running = false;
   let capturing = false;
-  let sampleRate = 44100;
   let samplesDone = 0, targetSamples = Infinity;
 
   let audioCtx = null, micStream = null, micSource = null, processor = null, silentGain = null;
@@ -280,23 +284,28 @@
   }
 
   // ---------- accumulators ----------
-  function newStat(){ return { sumE: 0, count: 0, maxE: 0, hist: new Uint32Array(HIST_BINS) }; }
+  // sumE/count → Leq (plain energy average); slow → Slow-weighted level used for Lmax and L10
+  function newStat(){ return { sumE: 0, count: 0, slow: 0, maxE: 0, hist: new Uint32Array(HIST_BINS) }; }
+
+  // exponential time weighting coefficient for frames that advance by hopSamples
+  function slowAlpha(hopSamples){ return 1 - Math.exp(-(hopSamples / sampleRate) / TAU_SLOW); }
 
   function resetStats(){
     stats = { narrow: RANGE_OPTIONS.map(newStat), octave: RANGE_OPTIONS.map(newStat) };
   }
 
   function resetAverage(){
-    binCumEnergy = new Float64Array(FFT_SIZE/2);
+    binCumEnergy = new Float64Array(Math.floor(FFT_SIZE/2));
     bandCumEnergy = new Float64Array(THIRD_OCTAVE_CENTERS.length);
     avgCount = 0;
   }
 
-  function addStat(s, e){
+  function addStat(s, e, alpha){
     s.sumE += e;
     s.count++;
-    if (e > s.maxE) s.maxE = e;
-    const db = e > 0 ? 10*Math.log10(e) : HIST_MIN;
+    s.slow = s.count === 1 ? e : s.slow + alpha * (e - s.slow);
+    if (s.slow > s.maxE) s.maxE = s.slow;
+    const db = s.slow > 0 ? 10*Math.log10(s.slow) : HIST_MIN;
     let b = Math.floor((db - HIST_MIN) / HIST_STEP);
     if (b < 0) b = 0; else if (b >= HIST_BINS) b = HIST_BINS - 1;
     s.hist[b]++;
@@ -317,7 +326,8 @@
 
   function refreshDeltaFHint(){
     const df = sampleRate / FFT_SIZE;
-    deltaFHint.textContent = "Δf≈" + (df < 10 ? df.toFixed(2) : df.toFixed(1)) + " Hz";
+    const whole = Math.abs(df - Math.round(df)) < 1e-6;
+    deltaFHint.textContent = (whole ? "Δf = " + Math.round(df) : "Δf≈" + df.toFixed(2)) + " Hz";
   }
 
   function refreshPeakBtn(){
@@ -372,6 +382,46 @@
     }
   }
 
+  function isPow2(n){ return (n & (n - 1)) === 0; }
+
+  // Bluestein (chirp-z): DFT of any length N computed with power-of-two FFTs
+  function bluesteinSetup(N){
+    let M = 1;
+    while (M < 2*N - 1) M <<= 1;
+    const wRe = new Float64Array(N), wIm = new Float64Array(N);
+    for (let n = 0; n < N; n++){
+      const ang = Math.PI * ((n * n) % (2 * N)) / N;
+      wRe[n] = Math.cos(ang); wIm[n] = -Math.sin(ang);
+    }
+    const bRe = new Float64Array(M), bIm = new Float64Array(M);
+    bRe[0] = wRe[0]; bIm[0] = -wIm[0];
+    for (let n = 1; n < N; n++){
+      bRe[n] = bRe[M - n] = wRe[n];
+      bIm[n] = bIm[M - n] = -wIm[n];
+    }
+    fft(bRe, bIm);
+    return { N, M, wRe, wIm, bRe, bIm, aRe: new Float64Array(M), aIm: new Float64Array(M) };
+  }
+
+  // returns X[k] (k < kCount) of the real input x, written into outRe/outIm
+  function bluesteinDFT(bs, x, kCount, outRe, outIm){
+    const { N, M, wRe, wIm, bRe, bIm, aRe, aIm } = bs;
+    for (let n = 0; n < N; n++){ aRe[n] = x[n] * wRe[n]; aIm[n] = x[n] * wIm[n]; }
+    aRe.fill(0, N); aIm.fill(0, N);
+    fft(aRe, aIm);
+    for (let k = 0; k < M; k++){
+      const r = aRe[k]*bRe[k] - aIm[k]*bIm[k];
+      const i = aRe[k]*bIm[k] + aIm[k]*bRe[k];
+      aRe[k] = r; aIm[k] = -i;           // conjugate → forward FFT acts as inverse
+    }
+    fft(aRe, aIm);
+    for (let k = 0; k < kCount; k++){
+      const cRe = aRe[k] / M, cIm = -aIm[k] / M;
+      outRe[k] = cRe*wRe[k] - cIm*wIm[k];
+      outIm[k] = cRe*wIm[k] + cIm*wRe[k];
+    }
+  }
+
   // A-weighting (IEC 61672), dB correction at f (Hz)
   function aWeightingDb(f){
     if (f <= 0) return -100;
@@ -389,11 +439,14 @@
       const v = 0.5 - 0.5 * Math.cos((2*Math.PI*i)/(size-1));
       win[i] = v; winSum += v;
     }
-    const half = size/2;
+    const half = Math.floor(size/2);
     const aGain = new Float64Array(half);
     for (let k = 0; k < half; k++) aGain[k] = Math.pow(10, aWeightingDb(k * sampleRate / size)/10);
-    return { size, hop: size/2, ring: new Float32Array(size), since: 0, filled: 0,
-             win, winSum, aGain, re: new Float32Array(size), im: new Float32Array(size) };
+    const pow2 = isPow2(size);
+    return { size, half, hop: Math.floor(size/2), ring: new Float32Array(size), since: 0, filled: 0,
+             win, winSum, aGain,
+             re: new Float64Array(pow2 ? size : half), im: new Float64Array(pow2 ? size : half),
+             xw: pow2 ? null : new Float64Array(size), bs: pow2 ? null : bluesteinSetup(size) };
   }
 
   // feeds samples in hop-sized chunks so every frame really advances by half a window
@@ -416,10 +469,14 @@
 
   // per-bin energy (squared peak amplitude), A-weighted when enabled
   function binEnergies(fr){
-    const n = fr.size, re = fr.re, im = fr.im;
-    for (let i = 0; i < n; i++){ re[i] = fr.ring[i] * fr.win[i]; im[i] = 0; }
-    fft(re, im);
-    const half = n/2;
+    const n = fr.size, re = fr.re, im = fr.im, half = fr.half;
+    if (fr.bs){
+      for (let i = 0; i < n; i++) fr.xw[i] = fr.ring[i] * fr.win[i];
+      bluesteinDFT(fr.bs, fr.xw, half, re, im);
+    } else {
+      for (let i = 0; i < n; i++){ re[i] = fr.ring[i] * fr.win[i]; im[i] = 0; }
+      fft(re, im);
+    }
     const norm2 = (2 / fr.winSum) * (2 / fr.winSum);
     const out = new Float64Array(half);
     for (let k = 1; k < half; k++){
@@ -443,15 +500,22 @@
 
   function onStatsFrame(E){
     const df = sampleRate / STATS_N;
+    const a = slowAlpha(statsFramer.hop);
     for (let r = 0; r < RANGE_OPTIONS.length; r++){
       const R = RANGE_OPTIONS[r];
-      addStat(stats.narrow[r], energyBetween(E, df, LOW_FREQ, R));
-      addStat(stats.octave[r], energyBetween(E, df, LOW_FREQ / BAND_FACTOR, R * BAND_FACTOR));
+      addStat(stats.narrow[r], energyBetween(E, df, LOW_FREQ, R), a);
+      addStat(stats.octave[r], energyBetween(E, df, LOW_FREQ / BAND_FACTOR, R * BAND_FACTOR), a);
     }
   }
 
   function onMainFrame(E){
-    latestEnergy = E;
+    // Time Inst. shows each bin with Slow (1 s) exponential averaging
+    if (!latestEnergy || latestEnergy.length !== E.length){
+      latestEnergy = E.slice();
+    } else {
+      const a = slowAlpha(mainFramer.hop);
+      for (let k = 0; k < E.length; k++) latestEnergy[k] += a * (E[k] - latestEnergy[k]);
+    }
     const df = sampleRate / FFT_SIZE;
     const kMax = Math.min(E.length - 1, Math.ceil(RANGE_OPTIONS[RANGE_OPTIONS.length-1] * BAND_FACTOR / df) + 1);
     for (let k = 1; k <= kMax; k++) binCumEnergy[k] += E[k];
@@ -529,6 +593,7 @@
     try{
       await ensureAudio();
       sampleRate = audioCtx.sampleRate;
+      FFT_SIZE = fftSizeForRange(maxFreq);
 
       mainFramer = createFramer(FFT_SIZE);
       statsFramer = createFramer(STATS_N);
@@ -574,7 +639,7 @@
   // ---------- what the chart currently shows ----------
   function narrowBinRange(){
     const df = sampleRate / FFT_SIZE;
-    const half = FFT_SIZE/2;
+    const half = Math.floor(FFT_SIZE/2);
     const loIdx = Math.max(1, Math.round(LOW_FREQ / df));
     const hiIdx = Math.min(half - 1, Math.max(loIdx + 1, Math.round(maxFreq / df)));
     return { loIdx, hiIdx, df };
@@ -757,7 +822,8 @@
       const padX = 4*d, bh = 17*d;
       const rightSide = x > box.padL + box.plotW*0.6;
       const bx = rightSide ? x - 4*d - tw - 2*padX : x + 4*d;
-      const by = box.padT + (2 + (m.rank-1)*19)*d;
+      // labels sit along the bottom of the plot so they don't cover the peaks
+      const by = box.padT + box.plotH - bh - (3 + (m.rank-1)*19)*d;
       ctx2d.fillStyle = C.tagBg;
       ctx2d.fillRect(bx, by, tw + 2*padX, bh);
       ctx2d.fillStyle = C.tagFg;
@@ -847,7 +913,7 @@
 
   function updateStats(){
     const hiLabel = maxFreq>=1000 ? (maxFreq/1000)+"k" : maxFreq;
-    statsRangeLabel.textContent = LOW_FREQ + " Hz – " + hiLabel + " Hz" + (aWeight ? " · A" : "");
+    statsRangeLabel.textContent = LOW_FREQ + " Hz – " + hiLabel + " Hz" + (aWeight ? " · A" : "") + " · Slow";
 
     const s = stats[mode][RANGE_OPTIONS.indexOf(maxFreq)];
     if (s.count === 0){
