@@ -36,22 +36,19 @@
 
   .btnRow{display:flex;gap:8px;flex:none;}
   .seg{display:flex;flex:1;gap:3px;}
-  .seg button{flex:1;padding:8px 2px;border:none;border-radius:9px;background:var(--navy2);
+  .seg button{flex:1;min-width:0;padding:7px 2px;border:1px solid transparent;border-radius:9px;background:var(--navy2);
     color:var(--navyText);font-size:14px;font-weight:700;white-space:nowrap;}
   .seg button.active{background:var(--teal);color:var(--tealInk);}
   .seg.view button.active{background:var(--orange);color:var(--orangeInk);}
 
-  .peakRow{display:flex;gap:6px;flex:none;}
-  .peakbtn{flex:1;padding:8px 6px;border-radius:9px;border:1px solid var(--navyText);background:transparent;
-    color:#ffffff;font-size:14px;font-weight:700;font-variant-numeric:tabular-nums;}
-  .peakbtn.hasMarkers{background:#ffffff;color:var(--navy);border-color:#ffffff;}
-  .peakbtn.full{opacity:.55;}
-  .timerbtn{flex:none;min-width:92px;padding:8px 10px;border-radius:9px;border:1px solid var(--navyLine);
-    background:var(--navy2);color:var(--navyText);font-size:14px;font-weight:700;font-variant-numeric:tabular-nums;}
-  .timerbtn.on{border-color:var(--orange);color:var(--orange);}
-  .timerbtn:disabled{opacity:1;}
-  .clearbtn{flex:none;padding:8px 12px;border:none;border-radius:9px;background:var(--navy2);
-    color:var(--navyText);font-size:14px;font-weight:700;}
+  /* bottom row reuses .btnRow/.seg so widths line up with the 4 buttons above */
+  .seg .peakbtn{border-color:var(--navyText);background:transparent;color:#ffffff;
+    font-variant-numeric:tabular-nums;}
+  .seg .peakbtn.hasMarkers{background:#ffffff;color:var(--navy);border-color:#ffffff;}
+  .seg .peakbtn.full{opacity:.55;}
+  .seg .timerbtn{border-color:var(--navyLine);font-variant-numeric:tabular-nums;}
+  .seg .timerbtn.on{border-color:var(--orange);color:var(--orange);}
+  .seg .timerbtn:disabled{opacity:1;}
 
   /* light cards */
   .card{background:var(--card);border-radius:16px;padding:10px 12px;flex:none;
@@ -122,10 +119,15 @@
         <button id="viewAvg">Time Avg.</button>
       </div>
     </div>
-    <div class="peakRow">
-      <button id="peakBtn" class="peakbtn">Peak Picking 0/5</button>
-      <button id="timerBtn" class="timerbtn" hidden>Timer Off</button>
-      <button id="peakClearBtn" class="clearbtn">Clear</button>
+    <div class="btnRow">
+      <div class="seg">
+        <button id="peakBtn" class="peakbtn">Peak 0/3</button>
+        <button id="peakClearBtn">Clear</button>
+      </div>
+      <div class="seg" id="timerGroup">
+        <button id="timerBtn" class="timerbtn">Timer Off</button>
+        <button id="timerResetBtn">Reset</button>
+      </div>
     </div>
   </div>
 
@@ -202,9 +204,9 @@
     500,630,800,1000,1250,1600,2000,2500,3150,4000,5000,6300,8000,10000
   ];
   const BAND_FACTOR = Math.pow(2, 1/6);
-  const MAX_PEAKS = 5;
-  const ORDINALS = ["1st","2nd","3rd","4th","5th"];
-  const TIMER_STEP = 10, TIMER_MAX = 120;
+  const MAX_PEAKS = 3;
+  const ORDINALS = ["1st","2nd","3rd"];
+  const TIMER_STEP = 10, TIMER_MAX = 90;
 
   // level histogram for L10: raw dB (before calibration), 0.1 dB steps
   const HIST_MIN = -200, HIST_STEP = 0.1, HIST_BINS = 2500;
@@ -251,6 +253,8 @@
   const viewAvg = $("viewAvg");
   const peakBtn = $("peakBtn");
   const timerBtn = $("timerBtn");
+  const timerResetBtn = $("timerResetBtn");
+  const timerGroup = $("timerGroup");
   const peakClearBtn = $("peakClearBtn");
   const freqRangeSel = $("freqRange");
   const deltaFHint = $("deltaFHint");
@@ -318,16 +322,17 @@
 
   function refreshPeakBtn(){
     const count = peakMarkers.filter(m => m.mode === mode).length;
-    peakBtn.textContent = "Peak Picking " + count + "/" + MAX_PEAKS;
+    peakBtn.textContent = "Peak " + count + "/" + MAX_PEAKS;
     peakBtn.classList.toggle("hasMarkers", count > 0);
     peakBtn.classList.toggle("full", count >= MAX_PEAKS);
   }
 
   function refreshTimerBtn(){
-    timerBtn.hidden = viewMode !== "avg";
+    timerGroup.style.visibility = viewMode === "avg" ? "visible" : "hidden";
     timerBtn.classList.toggle("on", timerSec > 0);
     timerBtn.disabled = running;
-    if (running && timerSec > 0){
+    timerResetBtn.disabled = running;
+    if (running && Number.isFinite(targetSamples)){
       const left = Math.max(0, (targetSamples - samplesDone) / sampleRate);
       timerBtn.textContent = "Timer " + Math.ceil(left) + "s";
     } else {
@@ -533,7 +538,8 @@
       clearMarkers();
       refreshDeltaFHint();
       samplesDone = 0;
-      targetSamples = timerSec > 0 ? Math.round(timerSec * sampleRate) : Infinity;
+      // the Timer applies only to Time Avg.; Time Inst. runs until Stop
+      targetSamples = (viewMode === "avg" && timerSec > 0) ? Math.round(timerSec * sampleRate) : Infinity;
 
       running = true;
       capturing = true;
@@ -559,9 +565,6 @@
     capturing = false;
     startStopBtn.textContent = "Start";
     startStopBtn.classList.remove("running");
-    try{
-      if (audioCtx && audioCtx.state === "running") await audioCtx.suspend();
-    } catch(e){ /* ignore */ }
     if (msg) setStatus(msg, kind);
     else if (wasRunning) setStatus("정지됨 · " + fmtTime(samplesDone / sampleRate));
     refreshTimerBtn();
@@ -878,7 +881,7 @@
     updateStats();
     if (running){
       const elapsed = samplesDone / sampleRate;
-      setStatus("측정 중 · " + fmtTime(elapsed) + (timerSec > 0 ? " / " + fmtTime(timerSec) : ""), "ok");
+      setStatus("측정 중 · " + fmtTime(elapsed) + (Number.isFinite(targetSamples) ? " / " + fmtTime(targetSamples / sampleRate) : ""), "ok");
       refreshTimerBtn();
       scheduleDraw();
     }
@@ -904,6 +907,7 @@
 
   function setViewMode(v){
     viewMode = v;
+    if (v === "instant") targetSamples = Infinity;   // switching to Time Inst. cancels a running Timer
     viewInstant.classList.toggle("active", v==="instant");
     viewAvg.classList.toggle("active", v==="avg");
     refreshTimerBtn();
@@ -922,9 +926,15 @@
     refreshPeakBtn();
     scheduleDraw();
   });
+  // Off → 10 → 20 … → 90 → 10 …
   timerBtn.addEventListener("click", () => {
     if (running) return;
-    timerSec = timerSec >= TIMER_MAX ? 0 : timerSec + TIMER_STEP;
+    timerSec = (timerSec === 0 || timerSec >= TIMER_MAX) ? TIMER_STEP : timerSec + TIMER_STEP;
+    refreshTimerBtn();
+  });
+  timerResetBtn.addEventListener("click", () => {
+    if (running) return;
+    timerSec = TIMER_STEP;
     refreshTimerBtn();
   });
 
@@ -959,11 +969,9 @@
 
   window.addEventListener("resize", scheduleDraw);
 
-  // release the mic when the user leaves the page or switches apps
+  // pause measuring in the background, but keep the mic so returning does not ask again
   document.addEventListener("visibilitychange", () => {
-    if (!document.hidden) return;
-    if (running) stop();
-    releaseAudio();
+    if (document.hidden && running) stop();
   });
   window.addEventListener("pagehide", releaseAudio);
 
