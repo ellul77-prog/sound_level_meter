@@ -69,7 +69,11 @@
   .field label{font-size:15px;color:var(--muted);white-space:nowrap;font-weight:600;}
   select{background:var(--field);color:var(--ink);border:1px solid var(--fieldLine);
     border-radius:8px;padding:5px 8px;font-size:17px;font-family:inherit;font-variant-numeric:tabular-nums;}
-  .deltaFHint{font-size:13px;color:var(--faint);font-variant-numeric:tabular-nums;white-space:nowrap;}
+  .twSeg{display:inline-flex;border:1px solid var(--fieldLine);border-radius:8px;overflow:hidden;background:var(--field);}
+  .twSeg button{border:none;background:transparent;color:var(--muted);font-size:15px;font-weight:700;
+    padding:6px 12px;}
+  .twSeg button + button{border-left:1px solid var(--fieldLine);}
+  .twSeg button.active{background:var(--navy);color:#ffffff;}
 
   /* Range dropdown and Cal. stepper share label and control widths so their edges line up */
   .field .key{width:62px;flex:none;}
@@ -180,7 +184,10 @@
           <button id="calUp" aria-label="Calibration 1 dB up">+</button>
         </div>
       </div>
-      <span class="deltaFHint" id="deltaFHint">Δf≈10.8 Hz</span>
+      <div class="twSeg" role="group" aria-label="Time weighting">
+        <button id="twFast">Fast</button>
+        <button id="twSlow" class="active">Slow</button>
+      </div>
     </div>
   </div>
 
@@ -210,7 +217,7 @@
   const MAX_PEAKS = 3;
   const ORDINALS = ["1st","2nd","3rd"];
   const TIMER_STEP = 10, TIMER_MAX = 90;
-  const TAU_SLOW = 1.0;                // Slow time weighting (IEC 61672), seconds
+  const TAU = { fast: 0.125, slow: 1.0 };   // time weighting constants (IEC 61672), seconds
 
   // level histogram for L10: raw dB (before calibration), 0.1 dB steps
   const HIST_MIN = -200, HIST_STEP = 0.1, HIST_BINS = 2500;
@@ -232,6 +239,7 @@
   let mode = "narrow";      // "narrow" | "octave"
   let viewMode = "instant"; // "instant" | "avg"
   let aWeight = true;
+  let timeWeight = "slow";  // "fast" | "slow"
   let calibOffset = 120;
   let timerSec = 0;         // 0 = Start/Stop
   let running = false;
@@ -261,7 +269,8 @@
   const timerGroup = $("timerGroup");
   const peakClearBtn = $("peakClearBtn");
   const freqRangeSel = $("freqRange");
-  const deltaFHint = $("deltaFHint");
+  const twFast = $("twFast");
+  const twSlow = $("twSlow");
   const aWeightChk = $("aWeight");
   const calibInput = $("calibOffset");
   const calDown = $("calDown");
@@ -284,11 +293,13 @@
   }
 
   // ---------- accumulators ----------
-  // sumE/count → Leq (plain energy average); slow → Slow-weighted level used for Lmax and L10
-  function newStat(){ return { sumE: 0, count: 0, slow: 0, maxE: 0, hist: new Uint32Array(HIST_BINS) }; }
+  // sumE/count → Leq (plain energy average); w.fast / w.slow → time-weighted level for Lmax and L10.
+  // Both weightings run in parallel so switching Fast/Slow never resets the measurement.
+  function newWeighted(){ return { y: 0, maxE: 0, hist: new Uint32Array(HIST_BINS) }; }
+  function newStat(){ return { sumE: 0, count: 0, w: { fast: newWeighted(), slow: newWeighted() } }; }
 
   // exponential time weighting coefficient for frames that advance by hopSamples
-  function slowAlpha(hopSamples){ return 1 - Math.exp(-(hopSamples / sampleRate) / TAU_SLOW); }
+  function weightAlpha(hopSamples, tau){ return 1 - Math.exp(-(hopSamples / sampleRate) / tau); }
 
   function resetStats(){
     stats = { narrow: RANGE_OPTIONS.map(newStat), octave: RANGE_OPTIONS.map(newStat) };
@@ -300,23 +311,26 @@
     avgCount = 0;
   }
 
-  function addStat(s, e, alpha){
+  function addStat(s, e, alphas){
     s.sumE += e;
     s.count++;
-    s.slow = s.count === 1 ? e : s.slow + alpha * (e - s.slow);
-    if (s.slow > s.maxE) s.maxE = s.slow;
-    const db = s.slow > 0 ? 10*Math.log10(s.slow) : HIST_MIN;
-    let b = Math.floor((db - HIST_MIN) / HIST_STEP);
-    if (b < 0) b = 0; else if (b >= HIST_BINS) b = HIST_BINS - 1;
-    s.hist[b]++;
+    for (const key of ["fast", "slow"]){
+      const w = s.w[key];
+      w.y = s.count === 1 ? e : w.y + alphas[key] * (e - w.y);
+      if (w.y > w.maxE) w.maxE = w.y;
+      const db = w.y > 0 ? 10*Math.log10(w.y) : HIST_MIN;
+      let b = Math.floor((db - HIST_MIN) / HIST_STEP);
+      if (b < 0) b = 0; else if (b >= HIST_BINS) b = HIST_BINS - 1;
+      w.hist[b]++;
+    }
   }
 
-  // L10 = level exceeded 10% of the time (90th percentile of the frame levels)
-  function l10Raw(s){
-    const above = s.count - Math.ceil(0.9 * s.count);
+  // L10 = level exceeded 10% of the time (90th percentile of the time-weighted levels)
+  function l10Raw(w, count){
+    const above = count - Math.ceil(0.9 * count);
     let cum = 0;
     for (let b = HIST_BINS - 1; b >= 0; b--){
-      cum += s.hist[b];
+      cum += w.hist[b];
       if (cum > above) return HIST_MIN + (b + 0.5) * HIST_STEP;
     }
     return null;
@@ -324,10 +338,10 @@
 
   function clearMarkers(){ peakMarkers = []; refreshPeakBtn(); }
 
-  function refreshDeltaFHint(){
+  function deltaFText(){
     const df = sampleRate / FFT_SIZE;
     const whole = Math.abs(df - Math.round(df)) < 1e-6;
-    deltaFHint.textContent = (whole ? "Δf = " + Math.round(df) : "Δf≈" + df.toFixed(2)) + " Hz";
+    return (whole ? "Δf = " + Math.round(df) : "Δf≈" + df.toFixed(2)) + " Hz";
   }
 
   function refreshPeakBtn(){
@@ -500,7 +514,7 @@
 
   function onStatsFrame(E){
     const df = sampleRate / STATS_N;
-    const a = slowAlpha(statsFramer.hop);
+    const a = { fast: weightAlpha(statsFramer.hop, TAU.fast), slow: weightAlpha(statsFramer.hop, TAU.slow) };
     for (let r = 0; r < RANGE_OPTIONS.length; r++){
       const R = RANGE_OPTIONS[r];
       addStat(stats.narrow[r], energyBetween(E, df, LOW_FREQ, R), a);
@@ -513,7 +527,7 @@
     if (!latestEnergy || latestEnergy.length !== E.length){
       latestEnergy = E.slice();
     } else {
-      const a = slowAlpha(mainFramer.hop);
+      const a = weightAlpha(mainFramer.hop, TAU[timeWeight]);
       for (let k = 0; k < E.length; k++) latestEnergy[k] += a * (E[k] - latestEnergy[k]);
     }
     const df = sampleRate / FFT_SIZE;
@@ -547,7 +561,6 @@
     latestEnergy = null;
     resetAverage();
     if (running) mainFramer = createFramer(FFT_SIZE);
-    refreshDeltaFHint();
   }
 
   // ---------- start / stop ----------
@@ -601,7 +614,6 @@
       resetStats();
       resetAverage();
       clearMarkers();
-      refreshDeltaFHint();
       samplesDone = 0;
       // the Timer applies only to Time Avg.; Time Inst. runs until Stop
       targetSamples = (viewMode === "avg" && timerSec > 0) ? Math.round(timerSec * sampleRate) : Infinity;
@@ -913,7 +925,8 @@
 
   function updateStats(){
     const hiLabel = maxFreq>=1000 ? (maxFreq/1000)+"k" : maxFreq;
-    statsRangeLabel.textContent = LOW_FREQ + " Hz – " + hiLabel + " Hz" + (aWeight ? " · A" : "") + " · Slow";
+    statsRangeLabel.textContent = LOW_FREQ + " Hz – " + hiLabel + " Hz" + (aWeight ? " · A" : "")
+      + (timeWeight === "fast" ? " · Fast" : " · Slow") + " · " + deltaFText();
 
     const s = stats[mode][RANGE_OPTIONS.indexOf(maxFreq)];
     if (s.count === 0){
@@ -922,8 +935,9 @@
     }
     const toDb = (e) => e > 0 ? 10*Math.log10(e) + calibOffset : null;
     const leq = toDb(s.sumE / s.count);
-    const lmax = toDb(s.maxE);
-    const l10r = l10Raw(s);
+    const w = s.w[timeWeight];
+    const lmax = toDb(w.maxE);
+    const l10r = l10Raw(w, s.count);
     const l10 = l10r == null ? null : Math.min(l10r + calibOffset, lmax == null ? Infinity : lmax);
     leqValue.textContent = leq == null ? "--" : leq.toFixed(1);
     lmaxValue.textContent = lmax == null ? "--" : lmax.toFixed(1);
@@ -1025,6 +1039,15 @@
     calibInput.value = calibOffset;
     scheduleDraw();
   }
+  function setTimeWeight(tw){
+    timeWeight = tw;
+    twFast.classList.toggle("active", tw === "fast");
+    twSlow.classList.toggle("active", tw === "slow");
+    scheduleDraw();
+  }
+  twFast.addEventListener("click", () => setTimeWeight("fast"));
+  twSlow.addEventListener("click", () => setTimeWeight("slow"));
+
   calDown.addEventListener("click", () => setCalib(calibOffset - 1));
   calUp.addEventListener("click", () => setCalib(calibOffset + 1));
   calibInput.addEventListener("input", () => {
@@ -1045,7 +1068,6 @@
   aWeightChk.checked = aWeight;
   resetStats();
   resetAverage();
-  refreshDeltaFHint();
   refreshPeakBtn();
   refreshTimerBtn();
   scheduleDraw();
