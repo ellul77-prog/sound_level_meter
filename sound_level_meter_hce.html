@@ -3,124 +3,152 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
-<title>Sound Level Meter</title>
+<title>Sound Level Meter for HCE</title>
 <style>
   :root{
-    --bg:#0f1115; --panel:#171a21; --panel2:#1e222b; --line:#2a2f3a;
-    --fg:#e8eaf0; --fg-dim:#9aa3b2; --accent:#4fd1c5; --accent2:#f6ad55;
-    --warn:#f06565; --good:#4fd17a;
+    --bg:#eef1f5; --ink:#0d1b2e; --muted:#5b6b80; --faint:#8a99ab;
+    --card:#ffffff; --line:#e3e8ef; --field:#f6f8fa; --fieldLine:#d3dae3;
+    --navy:#0d1b2e; --navy2:#1a2d47; --navyLine:#2c4566; --navyText:#9fb3c8;
+    --teal:#5eead4; --tealInk:#062a25; --orange:#fb923c; --orangeInk:#2e1300;
+    --lead:#0f766e; --stop:#dc2626;
   }
   *{box-sizing:border-box;}
-  html,body{height:100%;margin:0;}
+  html,body{margin:0;}
   body{
-    background:var(--bg);color:var(--fg);
+    background:var(--bg);color:var(--ink);
     font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
-    display:flex;flex-direction:column;gap:7px;
-    min-height:100vh;min-height:100dvh;
-    overflow:hidden;
+    display:flex;flex-direction:column;gap:8px;
+    height:100vh;height:100dvh;
+    overflow-y:auto;
     -webkit-tap-highlight-color:transparent;
-    padding:max(8px, env(safe-area-inset-top,0px)) max(14px, env(safe-area-inset-right,0px))
+    padding:max(10px, env(safe-area-inset-top,0px)) max(14px, env(safe-area-inset-right,0px))
             max(8px, env(safe-area-inset-bottom,0px)) max(14px, env(safe-area-inset-left,0px));
   }
-  h1{font-size:28px;font-weight:800;margin:2px 0 0;letter-spacing:.2px;flex:none;}
+  button{font-family:inherit;}
+  h1{font-size:27px;font-weight:800;margin:2px 0 0;letter-spacing:.2px;flex:none;line-height:1.15;}
+  h1 .for{font-size:.5em;font-weight:700;margin-left:5px;letter-spacing:.3px;color:var(--muted);}
 
-  .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;
-    padding:9px 11px;flex:none;}
+  /* navy chart panel */
+  .panel{flex:1 1 0;display:flex;flex-direction:column;gap:8px;background:var(--navy);
+    border-radius:18px;padding:10px;}
+  .plotwrap{position:relative;flex:1 1 0;min-height:34vh;min-height:34dvh;}
+  canvas{position:absolute;inset:0;width:100%;height:100%;display:block;border-radius:10px;}
 
-  .chartcard{flex:1 1 auto;min-height:0;display:flex;flex-direction:column;gap:7px;}
-  canvas{width:100%;flex:1;min-height:0;display:block;border-radius:10px;background:var(--panel2);}
+  .btnRow{display:flex;gap:8px;flex:none;}
+  .seg{display:flex;flex:1;gap:3px;}
+  .seg button{flex:1;padding:8px 2px;border:none;border-radius:9px;background:var(--navy2);
+    color:var(--navyText);font-size:14px;font-weight:700;white-space:nowrap;}
+  .seg button.active{background:var(--teal);color:var(--tealInk);}
+  .seg.view button.active{background:var(--orange);color:var(--orangeInk);}
 
-  .chartControls{display:flex;flex-direction:column;gap:6px;flex:none;}
-  .tabs{display:flex;gap:6px;}
-  .tabs button{flex:1;padding:8px 6px;border-radius:10px;border:1px solid var(--line);
-    background:var(--panel2);color:var(--fg-dim);font-size:14px;font-weight:700;}
-  .tabs button.active{background:var(--accent);color:#06211e;border-color:var(--accent);}
-  .tabs.view button.active{background:var(--accent2);border-color:var(--accent2);}
+  .peakRow{display:flex;gap:6px;flex:none;}
+  .peakbtn{flex:1;padding:8px 6px;border-radius:9px;border:1px solid var(--navyText);background:transparent;
+    color:#ffffff;font-size:14px;font-weight:700;font-variant-numeric:tabular-nums;}
+  .peakbtn.hasMarkers{background:#ffffff;color:var(--navy);border-color:#ffffff;}
+  .peakbtn.full{opacity:.55;}
+  .timerbtn{flex:none;min-width:92px;padding:8px 10px;border-radius:9px;border:1px solid var(--navyLine);
+    background:var(--navy2);color:var(--navyText);font-size:14px;font-weight:700;font-variant-numeric:tabular-nums;}
+  .timerbtn.on{border-color:var(--orange);color:var(--orange);}
+  .timerbtn:disabled{opacity:1;}
+  .clearbtn{flex:none;padding:8px 12px;border:none;border-radius:9px;background:var(--navy2);
+    color:var(--navyText);font-size:14px;font-weight:700;}
 
-  .peakRow{display:flex;gap:6px;}
-  .peakbtn{flex:1;padding:8px 6px;border-radius:10px;border:1px solid #ffffff;
-    background:transparent;color:#ffffff;font-size:14px;font-weight:700;}
-  .peakbtn.hasMarkers{background:#ffffff;color:#0f1115;}
-  .clearbtn{flex:none;padding:8px 14px;border-radius:10px;border:1px solid var(--line);
-    background:var(--panel2);color:var(--fg-dim);font-size:14px;font-weight:700;}
-
-  .statsHeader{font-size:14px;color:var(--fg-dim);text-align:center;margin-bottom:6px;font-weight:600;}
-  .statsGrid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;}
+  /* light cards */
+  .card{background:var(--card);border-radius:16px;padding:10px 12px;flex:none;
+    box-shadow:0 1px 2px rgba(13,27,46,.08);}
+  .statsHeader{font-size:13px;color:var(--muted);text-align:center;margin-bottom:4px;font-weight:600;}
+  .statsGrid{display:grid;grid-template-columns:1fr 1fr 1fr;}
   .stat{text-align:center;}
-  .statLabel{font-size:14px;color:var(--fg-dim);font-weight:800;letter-spacing:.5px;}
-  .statValue{font-size:30px;font-weight:800;font-variant-numeric:tabular-nums;color:var(--accent2);
-    line-height:1.15;}
+  .stat + .stat{border-left:1px solid var(--line);}
+  .statLabel{font-size:13px;color:var(--muted);font-weight:800;letter-spacing:.6px;}
+  .statLabel .lower{font-size:.74em;}
+  .statValue{font-size:31px;font-weight:800;font-variant-numeric:tabular-nums;color:var(--ink);line-height:1.1;}
+  .statValue small{font-size:13px;font-weight:700;margin-left:2px;color:var(--faint);}
+  .stat.lead .statValue{color:var(--lead);}
 
-  .settingsRow{display:flex;align-items:center;justify-content:space-between;gap:8px 12px;flex-wrap:wrap;}
+  .settings{display:flex;flex-direction:column;gap:8px;}
+  .setRow{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;}
   .field{display:flex;align-items:center;gap:7px;}
-  .field label{font-size:16px;color:var(--fg-dim);white-space:nowrap;font-weight:600;}
-  select, input[type=number]{
-    background:var(--panel2);color:var(--fg);border:1px solid var(--line);
-    border-radius:8px;padding:6px 8px;font-size:19px;min-width:0;font-variant-numeric:tabular-nums;
-  }
-  input[type=number]#calibOffset{width:84px;text-align:right;}
-  .deltaFHint{font-size:14px;color:var(--fg-dim);font-variant-numeric:tabular-nums;white-space:nowrap;}
+  .field label{font-size:15px;color:var(--muted);white-space:nowrap;font-weight:600;}
+  select{background:var(--field);color:var(--ink);border:1px solid var(--fieldLine);
+    border-radius:8px;padding:5px 8px;font-size:17px;font-family:inherit;font-variant-numeric:tabular-nums;}
+  .deltaFHint{font-size:13px;color:var(--faint);font-variant-numeric:tabular-nums;white-space:nowrap;}
+
+  .stepper{display:inline-flex;align-items:stretch;border:1px solid var(--fieldLine);border-radius:8px;
+    overflow:hidden;background:var(--field);}
+  .stepper button{width:32px;border:none;background:#ffffff;color:var(--ink);font-size:19px;font-weight:700;
+    line-height:1;padding:0;}
+  .stepper button:active{background:var(--line);}
+  .stepper input{width:54px;border:none;border-left:1px solid var(--fieldLine);border-right:1px solid var(--fieldLine);
+    border-radius:0;background:var(--field);color:var(--ink);font-size:17px;font-family:inherit;text-align:center;
+    padding:5px 2px;font-variant-numeric:tabular-nums;-moz-appearance:textfield;appearance:textfield;}
+  .stepper input::-webkit-inner-spin-button,
+  .stepper input::-webkit-outer-spin-button{-webkit-appearance:none;margin:0;}
+
   .switch{position:relative;display:inline-block;width:44px;height:26px;flex:none;}
   .switch input{opacity:0;width:0;height:0;}
-  .slider{position:absolute;inset:0;background:var(--panel2);border:1px solid var(--line);
-    border-radius:26px;transition:.15s;}
-  .slider:before{content:"";position:absolute;width:20px;height:20px;left:2px;top:2px;
-    background:var(--fg-dim);border-radius:50%;transition:.15s;}
-  .switch input:checked + .slider{background:var(--accent);border-color:var(--accent);}
-  .switch input:checked + .slider:before{transform:translateX(18px);background:#06211e;}
+  .slider{position:absolute;inset:0;background:var(--fieldLine);border-radius:26px;transition:.15s;}
+  .slider:before{content:"";position:absolute;width:20px;height:20px;left:3px;top:3px;
+    background:#ffffff;border-radius:50%;transition:.15s;box-shadow:0 1px 2px rgba(0,0,0,.2);}
+  .switch input:checked + .slider{background:var(--lead);}
+  .switch input:checked + .slider:before{transform:translateX(18px);}
 
-  .status{font-size:13px;color:var(--fg-dim);min-height:16px;text-align:center;flex:none;}
-  .status.err{color:var(--warn);}
-  .status.ok{color:var(--good);}
+  .status{font-size:13px;color:var(--muted);min-height:16px;text-align:center;flex:none;font-variant-numeric:tabular-nums;}
+  .status.err{color:var(--stop);}
+  .status.ok{color:var(--lead);}
 
-  .startstop{
-    width:100%;padding:13px;border:none;border-radius:14px;font-size:19px;font-weight:800;
-    background:var(--accent);color:#06211e;letter-spacing:.3px;flex:none;
-  }
-  .startstop.running{background:var(--warn);color:#2a0606;}
+  .startstop{width:100%;padding:14px;border:none;border-radius:14px;font-size:19px;font-weight:800;
+    background:var(--navy);color:#ffffff;letter-spacing:.3px;flex:none;}
+  .startstop.running{background:var(--stop);}
+
+  .credit{flex:none;display:flex;align-items:center;justify-content:center;gap:6px;
+    font-size:10px;color:var(--faint);line-height:1;}
+  .logoChip{display:inline-flex;}
+  .logoChip img{height:11px;width:auto;display:block;}
 </style>
 </head>
 <body>
-  <h1>Sound Level Meter</h1>
+  <h1>Sound Level Meter<span class="for">for HCE</span></h1>
 
-  <div class="card chartcard">
-    <canvas id="chart" width="800" height="440"></canvas>
-    <div class="chartControls">
-      <div class="tabs" id="modeTabs">
-        <button id="tabNarrow" class="active" data-mode="narrow">Narrow (FFT)</button>
-        <button id="tabOctave" data-mode="octave">1/3 Octave Band</button>
+  <div class="panel">
+    <div class="plotwrap"><canvas id="chart"></canvas></div>
+    <div class="btnRow">
+      <div class="seg">
+        <button id="tabNarrow" class="active">Narrow</button>
+        <button id="tabOctave">1/3 Oct.</button>
       </div>
-      <div class="tabs view" id="viewTabs">
-        <button id="viewInstant" class="active" data-view="instant">Instantaneous</button>
-        <button id="viewAvg" data-view="avg">Time Average</button>
+      <div class="seg view">
+        <button id="viewInstant" class="active">Time Inst.</button>
+        <button id="viewAvg">Time Avg.</button>
       </div>
-      <div class="peakRow">
-        <button id="peakBtn" class="peakbtn">Peak Picking</button>
-        <button id="peakClearBtn" class="clearbtn">Clear</button>
-      </div>
+    </div>
+    <div class="peakRow">
+      <button id="peakBtn" class="peakbtn">Peak Picking 0/5</button>
+      <button id="timerBtn" class="timerbtn" hidden>Timer Off</button>
+      <button id="peakClearBtn" class="clearbtn">Clear</button>
     </div>
   </div>
 
   <div class="card">
-    <div class="statsHeader" id="statsRangeLabel">20 Hz – 4k Hz</div>
+    <div class="statsHeader" id="statsRangeLabel">20 Hz – 4k Hz · A</div>
     <div class="statsGrid">
-      <div class="stat">
+      <div class="stat lead">
         <div class="statLabel">Leq</div>
-        <div class="statValue" id="leqValue">--</div>
+        <div class="statValue"><span id="leqValue">--</span><small>dB</small></div>
       </div>
       <div class="stat">
         <div class="statLabel">Lmax</div>
-        <div class="statValue" id="lmaxValue">--</div>
+        <div class="statValue"><span id="lmaxValue">--</span><small>dB</small></div>
       </div>
       <div class="stat">
-        <div class="statLabel">L10</div>
-        <div class="statValue" id="l10Value">--</div>
+        <div class="statLabel">L<span class="lower">10</span></div>
+        <div class="statValue"><span id="l10Value">--</span><small>dB</small></div>
       </div>
     </div>
   </div>
 
-  <div class="card">
-    <div class="settingsRow">
+  <div class="card settings">
+    <div class="setRow">
       <div class="field">
         <label for="freqRange">Range</label>
         <select id="freqRange">
@@ -129,70 +157,89 @@
           <option value="4000" selected>20 – 4k Hz</option>
           <option value="10000">20 – 10k Hz</option>
         </select>
-        <span class="deltaFHint" id="deltaFHint">Δf≈10.8 Hz</span>
       </div>
       <div class="field">
         <label for="aWeight">A Weighting</label>
         <label class="switch">
-          <input type="checkbox" id="aWeight">
+          <input type="checkbox" id="aWeight" checked>
           <span class="slider"></span>
         </label>
       </div>
+    </div>
+    <div class="setRow">
       <div class="field">
         <label for="calibOffset">Calibration(dB)</label>
-        <input type="number" id="calibOffset" value="120" step="0.1">
+        <div class="stepper">
+          <button id="calDown" aria-label="Calibration 1 dB down">−</button>
+          <input type="number" id="calibOffset" value="120" step="1" inputmode="decimal">
+          <button id="calUp" aria-label="Calibration 1 dB up">+</button>
+        </div>
       </div>
+      <span class="deltaFHint" id="deltaFHint">Δf≈10.8 Hz</span>
     </div>
   </div>
 
   <div class="status" id="status"></div>
   <button id="startStopBtn" class="startstop">Start</button>
+  <footer class="credit">
+    <span class="logoChip"><img src="data:image/png;base64,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" alt="HD Construction Equipment"></span>
+    <span>designed by Junghwan Kang, v1.0</span>
+  </footer>
 
 <script>
 (function(){
   "use strict";
 
   // ---------- constants ----------
-  const LOW_FREQ = 20;                 // 공통 하한 주파수
+  const LOW_FREQ = 20;
   const RANGE_OPTIONS = [500,1000,4000,10000];
+  const X_TICK_STEP = { 500: 100, 1000: 200, 4000: 1000, 10000: 2000 };
   const PROC_BUF = 4096;               // ScriptProcessor block size
+  const STATS_N = 4096;                // short frames for Leq/Lmax/L10 (≈85 ms window, ≈43 ms hop @48 kHz)
 
   const THIRD_OCTAVE_CENTERS = [
     20,25,31.5,40,50,63,80,100,125,160,200,250,315,400,
     500,630,800,1000,1250,1600,2000,2500,3150,4000,5000,6300,8000,10000
   ];
   const BAND_FACTOR = Math.pow(2, 1/6);
-  const MAX_HISTORY = 200000;
+  const MAX_PEAKS = 5;
+  const ORDINALS = ["1st","2nd","3rd","4th","5th"];
+  const TIMER_STEP = 10, TIMER_MAX = 120;
 
-  // Range ≤1k Hz → Δf≈1 Hz, 4k/10k Hz → Δf≈10 Hz (FFT 크기는 2의 거듭제곱)
+  // level histogram for L10: raw dB (before calibration), 0.1 dB steps
+  const HIST_MIN = -200, HIST_STEP = 0.1, HIST_BINS = 2500;
+
+  const C = {
+    bg: "#0d1b2e", grid: "#2b4568", gridStrong: "#3d5c85", label: "#c8d6e5", empty: "#9fb3c8",
+    inst: "#5eead4", instFill: "rgba(94,234,212,0.13)",
+    avg: "#fb923c", avgFill: "rgba(251,146,60,0.15)",
+    marker: "#ffffff", tagBg: "#ffffff", tagFg: "#0d1b2e"
+  };
+
+  // Range ≤1k Hz → Δf≈1 Hz, 4k/10k Hz → Δf≈10 Hz (FFT size must be a power of two)
   function fftSizeForRange(freq){ return freq <= 1000 ? 32768 : 4096; }
 
   // ---------- state ----------
   let maxFreq = 4000;
   let FFT_SIZE = fftSizeForRange(maxFreq);
-  let HOP = FFT_SIZE / 2;              // 50% overlap
-  let ringBuffer = new Float32Array(FFT_SIZE);
-  let windowCoeffs = null;
-  let windowSum = 0;
-
-  let audioCtx = null, micStream = null, micSource = null, processor = null, silentGain = null;
-  let running = false;
   let mode = "narrow";      // "narrow" | "octave"
   let viewMode = "instant"; // "instant" | "avg"
-  let aWeight = false;
+  let aWeight = true;
   let calibOffset = 120;
+  let timerSec = 0;         // 0 = Start/Stop
+  let running = false;
+  let capturing = false;
+  let sampleRate = 44100;
+  let samplesDone = 0, targetSamples = Infinity;
 
-  let samplesSinceLastFFT = 0;
-  let latestAmps = null;      // Float32Array length FFT_SIZE/2, linear peak-amplitude per bin
-  let latestSampleRate = 44100;
+  let audioCtx = null, micStream = null, micSource = null, processor = null, silentGain = null;
+  let mainFramer = null, statsFramer = null;
 
-  // per-frame history: [{narrow:[e500,e1k,e4k,e10k], octave:[e500,e1k,e4k,e10k]}], raw energy (no calibOffset)
-  let levelHistory = [];
-  let avgCount = 0;
-  let binCumEnergy = new Float64Array(FFT_SIZE/2);
-  let bandCumEnergy = new Float64Array(THIRD_OCTAVE_CENTERS.length);
-
-  let peakMarkers = [];       // [{mode, freq, db}]
+  let latestEnergy = null;    // per-bin energy of the latest display frame
+  let binCumEnergy, bandCumEnergy, avgCount;   // Time Average accumulators
+  let stats;                  // {narrow:[per range], octave:[per range]}
+  let peakMarkers = [];       // [{mode, freq, rank}]
+  let rafId = null;
 
   // ---------- DOM ----------
   const $ = (id) => document.getElementById(id);
@@ -203,11 +250,14 @@
   const viewInstant = $("viewInstant");
   const viewAvg = $("viewAvg");
   const peakBtn = $("peakBtn");
+  const timerBtn = $("timerBtn");
   const peakClearBtn = $("peakClearBtn");
   const freqRangeSel = $("freqRange");
   const deltaFHint = $("deltaFHint");
   const aWeightChk = $("aWeight");
   const calibInput = $("calibOffset");
+  const calDown = $("calDown");
+  const calUp = $("calUp");
   const statsRangeLabel = $("statsRangeLabel");
   const leqValue = $("leqValue");
   const lmaxValue = $("lmaxValue");
@@ -220,50 +270,72 @@
     statusEl.className = "status" + (kind ? " " + kind : "");
   }
 
-  function resetHistory(){
-    levelHistory = [];
-    avgCount = 0;
-    binCumEnergy = new Float64Array(FFT_SIZE/2);
-    bandCumEnergy = new Float64Array(THIRD_OCTAVE_CENTERS.length);
-    peakMarkers = [];
-    refreshPeakBtnState();
+  function fmtTime(sec){
+    const s = Math.floor(sec);
+    return Math.floor(s/60) + ":" + String(s % 60).padStart(2, "0");
   }
 
+  // ---------- accumulators ----------
+  function newStat(){ return { sumE: 0, count: 0, maxE: 0, hist: new Uint32Array(HIST_BINS) }; }
+
+  function resetStats(){
+    stats = { narrow: RANGE_OPTIONS.map(newStat), octave: RANGE_OPTIONS.map(newStat) };
+  }
+
+  function resetAverage(){
+    binCumEnergy = new Float64Array(FFT_SIZE/2);
+    bandCumEnergy = new Float64Array(THIRD_OCTAVE_CENTERS.length);
+    avgCount = 0;
+  }
+
+  function addStat(s, e){
+    s.sumE += e;
+    s.count++;
+    if (e > s.maxE) s.maxE = e;
+    const db = e > 0 ? 10*Math.log10(e) : HIST_MIN;
+    let b = Math.floor((db - HIST_MIN) / HIST_STEP);
+    if (b < 0) b = 0; else if (b >= HIST_BINS) b = HIST_BINS - 1;
+    s.hist[b]++;
+  }
+
+  // L10 = level exceeded 10% of the time (90th percentile of the frame levels)
+  function l10Raw(s){
+    const above = s.count - Math.ceil(0.9 * s.count);
+    let cum = 0;
+    for (let b = HIST_BINS - 1; b >= 0; b--){
+      cum += s.hist[b];
+      if (cum > above) return HIST_MIN + (b + 0.5) * HIST_STEP;
+    }
+    return null;
+  }
+
+  function clearMarkers(){ peakMarkers = []; refreshPeakBtn(); }
+
   function refreshDeltaFHint(){
-    const df = latestSampleRate / FFT_SIZE;
+    const df = sampleRate / FFT_SIZE;
     deltaFHint.textContent = "Δf≈" + (df < 10 ? df.toFixed(2) : df.toFixed(1)) + " Hz";
   }
 
-  function refreshPeakBtnState(){
-    peakBtn.classList.toggle("hasMarkers", peakMarkers.some(m => m.mode === mode));
+  function refreshPeakBtn(){
+    const count = peakMarkers.filter(m => m.mode === mode).length;
+    peakBtn.textContent = "Peak Picking " + count + "/" + MAX_PEAKS;
+    peakBtn.classList.toggle("hasMarkers", count > 0);
+    peakBtn.classList.toggle("full", count >= MAX_PEAKS);
   }
 
-  // ---------- Hanning window ----------
-  function buildWindow(n){
-    const w = new Float32Array(n);
-    let sum = 0;
-    for (let i = 0; i < n; i++){
-      const v = 0.5 - 0.5 * Math.cos((2*Math.PI*i)/(n-1));
-      w[i] = v;
-      sum += v;
+  function refreshTimerBtn(){
+    timerBtn.hidden = viewMode !== "avg";
+    timerBtn.classList.toggle("on", timerSec > 0);
+    timerBtn.disabled = running;
+    if (running && timerSec > 0){
+      const left = Math.max(0, (targetSamples - samplesDone) / sampleRate);
+      timerBtn.textContent = "Timer " + Math.ceil(left) + "s";
+    } else {
+      timerBtn.textContent = timerSec > 0 ? "Timer " + timerSec + "s" : "Timer Off";
     }
-    return { w, sum };
   }
 
-  function applyFftSize(newSize){
-    FFT_SIZE = newSize;
-    HOP = FFT_SIZE / 2;
-    ringBuffer = new Float32Array(FFT_SIZE);
-    const win = buildWindow(FFT_SIZE);
-    windowCoeffs = win.w;
-    windowSum = win.sum;
-    samplesSinceLastFFT = 0;
-    latestAmps = null;
-    resetHistory();
-    refreshDeltaFHint();
-  }
-
-  // ---------- in-place radix-2 FFT ----------
+  // ---------- DSP ----------
   function fft(re, im){
     const n = re.length;
     for (let i = 1, j = 0; i < n; i++){
@@ -295,192 +367,214 @@
     }
   }
 
-  // ---------- A-weighting (IEC 61672), returns dB correction at f(Hz) ----------
+  // A-weighting (IEC 61672), dB correction at f (Hz)
   function aWeightingDb(f){
     if (f <= 0) return -100;
     const f2 = f*f;
     const num = Math.pow(12194,2) * f2 * f2;
     const den = (f2 + 20.6*20.6) * Math.sqrt((f2+107.7*107.7)*(f2+737.9*737.9)) * (f2 + 12194*12194);
-    const ra = num/den;
-    return 20*Math.log10(ra) + 2.00;
+    return 20*Math.log10(num/den) + 2.00;
   }
 
-  function dbFromAmp(amp){
-    if (!(amp > 0)) return -160;
-    return 20*Math.log10(amp);
+  // Hanning window, 50% overlap framer over the incoming sample stream
+  function createFramer(size){
+    const win = new Float32Array(size);
+    let winSum = 0;
+    for (let i = 0; i < size; i++){
+      const v = 0.5 - 0.5 * Math.cos((2*Math.PI*i)/(size-1));
+      win[i] = v; winSum += v;
+    }
+    const half = size/2;
+    const aGain = new Float64Array(half);
+    for (let k = 0; k < half; k++) aGain[k] = Math.pow(10, aWeightingDb(k * sampleRate / size)/10);
+    return { size, hop: size/2, ring: new Float32Array(size), since: 0, filled: 0,
+             win, winSum, aGain, re: new Float32Array(size), im: new Float32Array(size) };
   }
 
-  function levelRawAt(amps, k, sr){
-    let ldb = dbFromAmp(amps[k]);
-    if (aWeight) ldb += aWeightingDb(k * sr / FFT_SIZE);
-    return ldb;
+  // feeds samples in hop-sized chunks so every frame really advances by half a window
+  function pushSamples(fr, input, onFrame){
+    const len = input.length;
+    let pos = 0;
+    while (pos < len){
+      const take = Math.min(fr.hop - fr.since, len - pos);
+      fr.ring.copyWithin(0, take);
+      fr.ring.set(input.subarray(pos, pos + take), fr.size - take);
+      pos += take;
+      fr.since += take;
+      fr.filled = Math.min(fr.size, fr.filled + take);
+      if (fr.since >= fr.hop){
+        fr.since = 0;
+        if (fr.filled >= fr.size) onFrame(binEnergies(fr));
+      }
+    }
   }
 
-  // ---------- audio processing ----------
-  function computeOctaveBandsRaw(amps, sr){
-    const half = FFT_SIZE/2;
-    const dbsRaw = [];
-    const energiesRaw = [];
+  // per-bin energy (squared peak amplitude), A-weighted when enabled
+  function binEnergies(fr){
+    const n = fr.size, re = fr.re, im = fr.im;
+    for (let i = 0; i < n; i++){ re[i] = fr.ring[i] * fr.win[i]; im[i] = 0; }
+    fft(re, im);
+    const half = n/2;
+    const norm2 = (2 / fr.winSum) * (2 / fr.winSum);
+    const out = new Float64Array(half);
+    for (let k = 1; k < half; k++){
+      out[k] = (re[k]*re[k] + im[k]*im[k]) * norm2 * (aWeight ? fr.aGain[k] : 1);
+    }
+    return out;
+  }
+
+  // energy between fa and fb; bin k covers [(k-0.5)df, (k+0.5)df] and contributes by overlap
+  function energyBetween(E, df, fa, fb){
+    const kStart = Math.max(1, Math.floor(fa/df + 0.5));
+    const kEnd = Math.min(E.length - 1, Math.floor(fb/df + 0.5));
+    let sum = 0;
+    for (let k = kStart; k <= kEnd; k++){
+      const lo = Math.max(fa, (k - 0.5) * df);
+      const hi = Math.min(fb, (k + 0.5) * df);
+      if (hi > lo) sum += E[k] * (hi - lo) / df;
+    }
+    return sum;
+  }
+
+  function onStatsFrame(E){
+    const df = sampleRate / STATS_N;
+    for (let r = 0; r < RANGE_OPTIONS.length; r++){
+      const R = RANGE_OPTIONS[r];
+      addStat(stats.narrow[r], energyBetween(E, df, LOW_FREQ, R));
+      addStat(stats.octave[r], energyBetween(E, df, LOW_FREQ / BAND_FACTOR, R * BAND_FACTOR));
+    }
+  }
+
+  function onMainFrame(E){
+    latestEnergy = E;
+    const df = sampleRate / FFT_SIZE;
+    const kMax = Math.min(E.length - 1, Math.ceil(RANGE_OPTIONS[RANGE_OPTIONS.length-1] * BAND_FACTOR / df) + 1);
+    for (let k = 1; k <= kMax; k++) binCumEnergy[k] += E[k];
     for (let i = 0; i < THIRD_OCTAVE_CENTERS.length; i++){
       const fc = THIRD_OCTAVE_CENTERS[i];
-      const flo = fc / BAND_FACTOR;
-      const fhi = fc * BAND_FACTOR;
-      let kLo = Math.max(1, Math.ceil(flo * FFT_SIZE / sr));
-      let kHi = Math.min(half - 1, Math.floor(fhi * FFT_SIZE / sr));
-      if (kHi < kLo) kHi = kLo;
-      let energy = 0;
-      for (let k = kLo; k <= kHi; k++){
-        if (!(amps[k] > 0)) continue;
-        energy += Math.pow(10, levelRawAt(amps, k, sr)/10);
-      }
-      energiesRaw.push(energy);
-      dbsRaw.push(energy > 0 ? 10*Math.log10(energy) : -160);
+      bandCumEnergy[i] += energyBetween(E, df, fc / BAND_FACTOR, fc * BAND_FACTOR);
     }
-    return { dbsRaw, energiesRaw };
-  }
-
-  function updateAccumulators(amps, sr){
-    const half = FFT_SIZE/2;
-    const loIdx = Math.max(1, Math.round(LOW_FREQ * FFT_SIZE / sr));
-    const hiMax = Math.min(half - 1, Math.round(RANGE_OPTIONS[RANGE_OPTIONS.length-1] * FFT_SIZE / sr));
-
-    let running = 0, ri = 0;
-    const narrowRangeEnergies = [0,0,0,0];
-    for (let k = loIdx; k <= hiMax; k++){
-      let e = 0;
-      if (amps[k] > 0){ e = Math.pow(10, levelRawAt(amps, k, sr)/10); running += e; }
-      binCumEnergy[k] += e;
-      const f = k * sr / FFT_SIZE;
-      while (ri < RANGE_OPTIONS.length && f >= RANGE_OPTIONS[ri]){ narrowRangeEnergies[ri] = running; ri++; }
-    }
-    while (ri < RANGE_OPTIONS.length){ narrowRangeEnergies[ri] = running; ri++; }
-
-    const { energiesRaw } = computeOctaveBandsRaw(amps, sr);
-    let runningO = 0, rio = 0;
-    const octaveRangeEnergies = [0,0,0,0];
-    for (let i = 0; i < energiesRaw.length; i++){
-      bandCumEnergy[i] += energiesRaw[i];
-      runningO += energiesRaw[i];
-      const fc = THIRD_OCTAVE_CENTERS[i];
-      while (rio < RANGE_OPTIONS.length && fc >= RANGE_OPTIONS[rio]){ octaveRangeEnergies[rio] = runningO; rio++; }
-    }
-    while (rio < RANGE_OPTIONS.length){ octaveRangeEnergies[rio] = runningO; rio++; }
-
-    levelHistory.push({ narrow: narrowRangeEnergies, octave: octaveRangeEnergies });
-    if (levelHistory.length > MAX_HISTORY) levelHistory.splice(0, MAX_HISTORY/2);
     avgCount++;
   }
 
-  function computeFFTFrame(){
-    const n = FFT_SIZE;
-    const re = new Float32Array(n);
-    const im = new Float32Array(n);
-    for (let i = 0; i < n; i++){
-      re[i] = ringBuffer[i] * windowCoeffs[i];
+  function onAudio(e){
+    if (!capturing) return;
+    let input = e.inputBuffer.getChannelData(0);
+    const room = targetSamples - samplesDone;
+    if (input.length > room) input = input.subarray(0, Math.max(0, room));
+    if (input.length > 0){
+      pushSamples(mainFramer, input, onMainFrame);
+      pushSamples(statsFramer, input, onStatsFrame);
+      samplesDone += input.length;
     }
-    fft(re, im);
-    const half = n/2;
-    const amps = new Float32Array(half);
-    const norm = 2 / windowSum;
-    for (let k = 0; k < half; k++){
-      const mag = Math.sqrt(re[k]*re[k] + im[k]*im[k]);
-      amps[k] = mag * norm;
+    if (samplesDone >= targetSamples){
+      capturing = false;
+      setTimeout(() => stop("Timer 측정 완료 · " + fmtTime(timerSec), "ok"), 0);
     }
-    latestAmps = amps;
-    latestSampleRate = audioCtx.sampleRate;
-    updateAccumulators(amps, latestSampleRate);
   }
 
-  function onAudioProcess(e){
-    const input = e.inputBuffer.getChannelData(0);
-    const len = input.length;
-    if (len >= FFT_SIZE){
-      ringBuffer.set(input.subarray(len - FFT_SIZE));
-    } else {
-      ringBuffer.copyWithin(0, len);
-      ringBuffer.set(input, FFT_SIZE - len);
+  function applyFftSize(newSize){
+    FFT_SIZE = newSize;
+    latestEnergy = null;
+    resetAverage();
+    if (running) mainFramer = createFramer(FFT_SIZE);
+    refreshDeltaFHint();
+  }
+
+  // ---------- start / stop ----------
+  function micIsLive(){
+    return !!micStream && micStream.getAudioTracks().some(t => t.readyState === "live");
+  }
+
+  // the mic is opened once and kept while the page is visible, so iOS asks for permission only once per visit
+  async function ensureAudio(){
+    if (audioCtx && audioCtx.state !== "closed" && micIsLive() && processor){
+      await audioCtx.resume();
+      return;
     }
-    samplesSinceLastFFT += len;
-    while (samplesSinceLastFFT >= HOP){
-      computeFFTFrame();
-      samplesSinceLastFFT -= HOP;
-    }
+    releaseAudio();
+    const AC = window.AudioContext || window.webkitAudioContext;
+    audioCtx = new AC();
+    await audioCtx.resume();
+    micStream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: 1 }
+    });
+    micSource = audioCtx.createMediaStreamSource(micStream);
+    processor = audioCtx.createScriptProcessor(PROC_BUF, 1, 1);
+    processor.onaudioprocess = onAudio;
+    silentGain = audioCtx.createGain();
+    silentGain.gain.value = 0;
+    micSource.connect(processor);
+    processor.connect(silentGain);
+    silentGain.connect(audioCtx.destination);
+  }
+
+  function releaseAudio(){
+    try{
+      if (processor){ processor.disconnect(); processor.onaudioprocess = null; }
+      if (silentGain) silentGain.disconnect();
+      if (micSource) micSource.disconnect();
+      if (micStream) micStream.getTracks().forEach(t => t.stop());
+      if (audioCtx && audioCtx.state !== "closed") audioCtx.close();
+    } catch(e){ /* ignore */ }
+    processor = null; silentGain = null; micSource = null; micStream = null; audioCtx = null;
   }
 
   async function start(){
     try{
-      const AC = window.AudioContext || window.webkitAudioContext;
-      audioCtx = new AC();
-      await audioCtx.resume();
-      latestSampleRate = audioCtx.sampleRate;
+      await ensureAudio();
+      sampleRate = audioCtx.sampleRate;
+
+      mainFramer = createFramer(FFT_SIZE);
+      statsFramer = createFramer(STATS_N);
+      latestEnergy = null;
+      resetStats();
+      resetAverage();
+      clearMarkers();
       refreshDeltaFHint();
+      samplesDone = 0;
+      targetSamples = timerSec > 0 ? Math.round(timerSec * sampleRate) : Infinity;
 
-      const win = buildWindow(FFT_SIZE);
-      windowCoeffs = win.w;
-      windowSum = win.sum;
-      ringBuffer = new Float32Array(FFT_SIZE);
-      samplesSinceLastFFT = 0;
-
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: false,
-          noiseSuppression: false,
-          autoGainControl: false,
-          channelCount: 1
-        }
-      });
-      micStream = stream;
-      micSource = audioCtx.createMediaStreamSource(stream);
-
-      processor = audioCtx.createScriptProcessor(PROC_BUF, 1, 1);
-      processor.onaudioprocess = onAudioProcess;
-
-      silentGain = audioCtx.createGain();
-      silentGain.gain.value = 0;
-
-      micSource.connect(processor);
-      processor.connect(silentGain);
-      silentGain.connect(audioCtx.destination);
-
-      resetHistory();
       running = true;
+      capturing = true;
       startStopBtn.textContent = "Stop";
       startStopBtn.classList.add("running");
-      setStatus("측정 중...", "ok");
-      requestAnimationFrame(drawLoop);
+      refreshTimerBtn();
+      scheduleDraw();
     } catch (err){
       console.error(err);
       let msg = "마이크를 시작할 수 없습니다: " + (err && err.message ? err.message : err);
       if (location.protocol !== "https:" && location.hostname !== "localhost" && location.hostname !== "127.0.0.1"){
         msg += " (HTTPS 또는 localhost 환경이 필요합니다)";
       }
-      setStatus(msg, "err");
-      await stop();
+      releaseAudio();
+      await stop(msg, "err");
     }
   }
 
-  async function stop(){
+  // pauses analysis only; the mic stays open for the next Start
+  async function stop(msg, kind){
+    const wasRunning = running;
     running = false;
+    capturing = false;
     startStopBtn.textContent = "Start";
     startStopBtn.classList.remove("running");
     try{
-      if (processor){ processor.disconnect(); processor.onaudioprocess = null; }
-      if (silentGain) silentGain.disconnect();
-      if (micSource) micSource.disconnect();
-      if (micStream) micStream.getTracks().forEach(t => t.stop());
-      if (audioCtx) await audioCtx.close();
+      if (audioCtx && audioCtx.state === "running") await audioCtx.suspend();
     } catch(e){ /* ignore */ }
-    processor = null; silentGain = null; micSource = null; micStream = null; audioCtx = null;
-    if (statusEl.className.indexOf("err") === -1) setStatus("정지됨");
+    if (msg) setStatus(msg, kind);
+    else if (wasRunning) setStatus("정지됨 · " + fmtTime(samplesDone / sampleRate));
+    refreshTimerBtn();
+    scheduleDraw();
   }
 
-  // ---------- level / range helpers ----------
+  // ---------- what the chart currently shows ----------
   function narrowBinRange(){
-    const sr = latestSampleRate;
+    const df = sampleRate / FFT_SIZE;
     const half = FFT_SIZE/2;
-    const loIdx = Math.max(1, Math.round(LOW_FREQ * FFT_SIZE / sr));
-    const hiIdx = Math.min(half - 1, Math.max(loIdx, Math.round(maxFreq * FFT_SIZE / sr)));
-    return { loIdx, hiIdx };
+    const loIdx = Math.max(1, Math.round(LOW_FREQ / df));
+    const hiIdx = Math.min(half - 1, Math.max(loIdx + 1, Math.round(maxFreq / df)));
+    return { loIdx, hiIdx, df };
   }
 
   function visibleOctaveIndices(){
@@ -491,52 +585,55 @@
     return idxs;
   }
 
-  function hasData(useAvg){
-    return useAvg ? avgCount > 0 : !!latestAmps;
-  }
-
-  // dB values currently shown on the narrow chart (instant or time average)
-  function narrowDbArray(loIdx, hiIdx, sr, useAvg){
-    const n = hiIdx - loIdx + 1;
-    const dbArr = new Float32Array(n);
-    for (let i=0;i<n;i++){
-      const k = loIdx+i;
-      const energy = useAvg
-        ? binCumEnergy[k] / avgCount
-        : (latestAmps[k] > 0 ? Math.pow(10, levelRawAt(latestAmps, k, sr)/10) : 0);
-      dbArr[i] = energy > 0 ? 10*Math.log10(energy) + calibOffset : -160;
-    }
-    return dbArr;
-  }
-
-  // dB values currently shown on the octave chart, for the visible band indices
-  function octaveDbArray(idxs, sr, useAvg){
-    if (useAvg){
-      return idxs.map(i => {
-        const e = bandCumEnergy[i] / avgCount;
-        return e > 0 ? 10*Math.log10(e) + calibOffset : -160;
-      });
-    }
-    const { dbsRaw } = computeOctaveBandsRaw(latestAmps, sr);
-    return idxs.map(i => dbsRaw[i] + calibOffset);
-  }
-
-  function getCurrentPeak(){
+  function currentSeries(){
     const useAvg = (viewMode === "avg");
-    if (!hasData(useAvg)) return null;
-    const sr = latestSampleRate;
+    if (useAvg ? avgCount === 0 : !latestEnergy) return null;
+    const toDb = (e) => e > 0 ? 10*Math.log10(e) + calibOffset : -160;
     if (mode === "narrow"){
-      const { loIdx, hiIdx } = narrowBinRange();
-      const dbArr = narrowDbArray(loIdx, hiIdx, sr, useAvg);
-      let best = 0;
-      for (let i=1;i<dbArr.length;i++) if (dbArr[i] > dbArr[best]) best = i;
-      return { freq: (loIdx+best) * sr / FFT_SIZE, db: dbArr[best] };
+      const { loIdx, hiIdx, df } = narrowBinRange();
+      const n = hiIdx - loIdx + 1;
+      const vals = new Array(n), freqs = new Array(n);
+      for (let i = 0; i < n; i++){
+        const k = loIdx + i;
+        vals[i] = toDb(useAvg ? binCumEnergy[k] / avgCount : latestEnergy[k]);
+        freqs[i] = k * df;
+      }
+      return { vals, freqs, useAvg };
     }
+    const df = sampleRate / FFT_SIZE;
     const idxs = visibleOctaveIndices();
-    const dbs = octaveDbArray(idxs, sr, useAvg);
+    const vals = idxs.map(i => {
+      const fc = THIRD_OCTAVE_CENTERS[i];
+      return toDb(useAvg ? bandCumEnergy[i] / avgCount
+                         : energyBetween(latestEnergy, df, fc / BAND_FACTOR, fc * BAND_FACTOR));
+    });
+    return { vals, freqs: idxs.map(i => THIRD_OCTAVE_CENTERS[i]), useAvg };
+  }
+
+  function nearestIndex(freqs, f){
     let best = 0;
-    for (let i=1;i<dbs.length;i++) if (dbs[i] > dbs[best]) best = i;
-    return { freq: THIRD_OCTAVE_CENTERS[idxs[best]], db: dbs[best] };
+    for (let i = 1; i < freqs.length; i++){
+      if (Math.abs(freqs[i] - f) < Math.abs(freqs[best] - f)) best = i;
+    }
+    return best;
+  }
+
+  // adds the next-highest peak not yet marked (local maxima first)
+  function pickNextPeak(){
+    const mine = peakMarkers.filter(m => m.mode === mode);
+    if (mine.length >= MAX_PEAKS) return;
+    const s = currentSeries();
+    if (!s) return;
+    const v = s.vals, n = v.length;
+    const isLocalMax = (i) => (i === 0 || v[i] >= v[i-1]) && (i === n-1 || v[i] > v[i+1]);
+    const order = Array.from({ length: n }, (_, i) => i).sort((a, b) => v[b] - v[a]);
+    const minSep = mode === "narrow" ? 4 : 0;
+    const marked = mine.map(m => nearestIndex(s.freqs, m.freq));
+    const free = (i) => marked.every(j => Math.abs(i - j) > minSep);
+    let pick = order.find(i => isLocalMax(i) && free(i));
+    if (pick === undefined && mode === "octave") pick = order.find(free);
+    if (pick === undefined) return;
+    peakMarkers.push({ mode, freq: s.freqs[pick], rank: mine.length + 1 });
   }
 
   function formatFreqLabel(f){
@@ -547,259 +644,260 @@
     return (f < 100 ? f.toFixed(1).replace(/\.0$/,"") : Math.round(f)) + " Hz";
   }
 
+  function tickLabel(f){
+    return f >= 1000 ? (f/1000) + "k" : String(f);
+  }
+
   // ---------- drawing ----------
+  function dpr(){ return window.devicePixelRatio || 1; }
+  function px(cssPx, weight){ return (weight || "") + " " + (cssPx * dpr()).toFixed(1) + "px -apple-system, sans-serif"; }
+
   function resizeCanvas(){
     const rect = canvas.getBoundingClientRect();
-    const dpr = window.devicePixelRatio || 1;
-    const w = Math.max(200, Math.round(rect.width * dpr));
-    const h = Math.max(100, Math.round(rect.height * dpr));
-    if (canvas.width !== w || canvas.height !== h){
-      canvas.width = w; canvas.height = h;
-    }
+    const w = Math.max(200, Math.round(rect.width * dpr()));
+    const h = Math.max(100, Math.round(rect.height * dpr()));
+    if (canvas.width !== w || canvas.height !== h){ canvas.width = w; canvas.height = h; }
   }
 
-  // font size scaled to CSS pixels, so labels look the same size on every screen
-  function px(cssPx){
-    return (cssPx * (window.devicePixelRatio || 1)).toFixed(1) + "px -apple-system, sans-serif";
-  }
-
-  function niceRange(values){
+  // Y axis on multiples of 10 dB with at most 8 intervals
+  function yAxis(values){
     let mn = Infinity, mx = -Infinity;
     for (const v of values){
-      if (v === -Infinity || v === Infinity || Number.isNaN(v)) continue;
+      if (!Number.isFinite(v) || v < -150) continue;
       if (v < mn) mn = v;
       if (v > mx) mx = v;
     }
-    if (!Number.isFinite(mn) || !Number.isFinite(mx)){ mn = -80; mx = 0; }
-    mn -= 5; mx += 8;
-    if (mx - mn < 20){ const mid=(mx+mn)/2; mn=mid-10; mx=mid+10; }
-    return [mn, mx];
+    if (!Number.isFinite(mn)){ mn = 0; mx = 80; }
+    let lo = Math.floor((mn - 2) / 10) * 10;
+    let hi = Math.ceil((mx + 4) / 10) * 10;
+    if (hi - lo < 30){ hi = lo + 30; }
+    let step = 10;
+    for (const s of [10, 20, 50, 100]){ step = s; if ((hi - lo) / s <= 8) break; }
+    lo = Math.floor(lo / step) * step;
+    hi = Math.ceil(hi / step) * step;
+    return { lo, hi, step };
   }
 
-  function plotBox(padBRatio){
-    const w = canvas.width, h = canvas.height;
-    const dpr = window.devicePixelRatio || 1;
-    const padL = 34*dpr, padR = 10*dpr, padT = 10*dpr, padB = padBRatio*dpr;
+  function plotBox(padBCss){
+    const w = canvas.width, h = canvas.height, d = dpr();
+    const padL = 36*d, padR = 10*d, padT = 10*d, padB = padBCss*d;
     return { w, h, padL, padR, padT, padB, plotW: w-padL-padR, plotH: h-padT-padB };
   }
 
-  function drawPeakMarkers(box, freqToX){
-    const dpr = window.devicePixelRatio || 1;
+  function drawGridY(box, ax){
+    const { padL, padT, plotW, plotH } = box;
+    const d = dpr();
+    ctx2d.font = px(13, "600");
+    ctx2d.fillStyle = C.label;
+    ctx2d.textAlign = "right";
+    ctx2d.textBaseline = "middle";
+    for (let v = ax.lo; v <= ax.hi + 1e-9; v += ax.step){
+      const y = padT + plotH * (1 - (v - ax.lo) / (ax.hi - ax.lo));
+      ctx2d.strokeStyle = (v === ax.lo) ? C.gridStrong : C.grid;
+      ctx2d.lineWidth = d;
+      ctx2d.beginPath();
+      ctx2d.moveTo(padL, Math.round(y) + 0.5); ctx2d.lineTo(padL + plotW, Math.round(y) + 0.5);
+      ctx2d.stroke();
+      ctx2d.fillText(String(v), padL - 5*d, y);
+    }
+    ctx2d.textBaseline = "alphabetic";
+  }
+
+  function drawNarrowXAxis(box, fLo, fHi, df){
+    const { padL, padT, plotW, plotH } = box;
+    const d = dpr();
+    const step = X_TICK_STEP[maxFreq];
+    const xOf = (f) => padL + (f - fLo) / (fHi - fLo) * plotW;
+    ctx2d.font = px(13, "600");
+    ctx2d.fillStyle = C.label;
+    ctx2d.textBaseline = "top";
+    const ticks = [];
+    for (let f = step; f <= fHi + df; f += step) ticks.push(f);
+    for (const f of ticks){
+      const x = Math.min(padL + plotW, xOf(f));
+      ctx2d.strokeStyle = C.grid;
+      ctx2d.lineWidth = d;
+      ctx2d.beginPath();
+      ctx2d.moveTo(Math.round(x) + 0.5, padT); ctx2d.lineTo(Math.round(x) + 0.5, padT + plotH);
+      ctx2d.stroke();
+      ctx2d.textAlign = (x > padL + plotW - 14*d) ? "right" : "center";
+      ctx2d.fillText(tickLabel(f), x, padT + plotH + 5*d);
+    }
+    if (ticks.length && xOf(ticks[0]) - padL > 30*d){
+      ctx2d.textAlign = "left";
+      ctx2d.fillText(String(LOW_FREQ), padL, padT + plotH + 5*d);
+    }
+    ctx2d.textBaseline = "alphabetic";
+  }
+
+  function drawPeakMarkers(box, xOf){
+    const d = dpr();
     ctx2d.save();
-    ctx2d.lineWidth = 1.5*dpr;
-    ctx2d.font = "bold " + px(14);
+    ctx2d.lineWidth = 1.5*d;
+    ctx2d.font = px(13, "bold");
+    ctx2d.textAlign = "left";
+    ctx2d.textBaseline = "middle";
     for (const m of peakMarkers){
       if (m.mode !== mode) continue;
-      const x = freqToX(m.freq);
+      const x = xOf(m.freq);
       if (x == null) continue;
-      ctx2d.strokeStyle = "#ffffff";
-      ctx2d.setLineDash([5*dpr, 4*dpr]);
+      ctx2d.strokeStyle = C.marker;
+      ctx2d.setLineDash([5*d, 4*d]);
       ctx2d.beginPath();
       ctx2d.moveTo(x, box.padT);
       ctx2d.lineTo(x, box.padT + box.plotH);
       ctx2d.stroke();
       ctx2d.setLineDash([]);
-      const label = formatFreqLabel(m.freq);
-      const rightSide = x > box.padL + box.plotW*0.7;
-      ctx2d.textAlign = rightSide ? "right" : "left";
-      const tx = x + (rightSide ? -5*dpr : 5*dpr);
-      const ty = box.padT + 16*dpr;
+
+      const label = ORDINALS[m.rank-1] + " " + formatFreqLabel(m.freq);
       const tw = ctx2d.measureText(label).width;
-      ctx2d.fillStyle = "rgba(15,17,21,0.85)";
-      ctx2d.fillRect(rightSide ? tx - tw - 3*dpr : tx - 3*dpr, ty - 14*dpr, tw + 6*dpr, 19*dpr);
-      ctx2d.fillStyle = "#ffffff";
-      ctx2d.fillText(label, tx, ty);
+      const padX = 4*d, bh = 17*d;
+      const rightSide = x > box.padL + box.plotW*0.6;
+      const bx = rightSide ? x - 4*d - tw - 2*padX : x + 4*d;
+      const by = box.padT + (2 + (m.rank-1)*19)*d;
+      ctx2d.fillStyle = C.tagBg;
+      ctx2d.fillRect(bx, by, tw + 2*padX, bh);
+      ctx2d.fillStyle = C.tagFg;
+      ctx2d.fillText(label, bx + padX, by + bh/2);
     }
     ctx2d.restore();
   }
 
-  function drawNarrow(useAvg){
-    const box = plotBox(26);
-    const { w, h, padL, padT, plotW, plotH } = box;
-    ctx2d.clearRect(0,0,w,h);
-    ctx2d.fillStyle = "#1e222b";
-    ctx2d.fillRect(0,0,w,h);
+  function drawNarrow(s){
+    const box = plotBox(24);
+    const { padL, padT, plotW, plotH } = box;
+    const v = s.vals, n = v.length;
+    const fLo = s.freqs[0], fHi = s.freqs[n-1];
+    const ax = yAxis(v);
+    const xOf = (f) => padL + (f-fLo)/(fHi-fLo)*plotW;
+    const yOf = (d) => padT + plotH*(1-Math.min(1,Math.max(0,(d-ax.lo)/(ax.hi-ax.lo))));
 
-    if (!hasData(useAvg)){ drawEmpty(useAvg ? "Time Average 수집 중..." : null); return; }
-
-    const sr = latestSampleRate;
-    const { loIdx, hiIdx } = narrowBinRange();
-    const fLo = loIdx*sr/FFT_SIZE, fHi = hiIdx*sr/FFT_SIZE;
-    const dbArr = narrowDbArray(loIdx, hiIdx, sr, useAvg);
-    const n = dbArr.length;
-    const [yMin,yMax] = niceRange(dbArr);
-
-    drawGridY(box, yMin, yMax);
-    drawFreqAxisLinear(box, fLo, fHi);
+    drawNarrowXAxis(box, fLo, fHi, sampleRate / FFT_SIZE);
+    drawGridY(box, ax);
 
     ctx2d.beginPath();
-    ctx2d.strokeStyle = useAvg ? "#f6ad55" : "#4fd1c5";
-    ctx2d.lineWidth = 1.5*(window.devicePixelRatio || 1);
     for (let i=0;i<n;i++){
-      const x = padL + (n > 1 ? i/(n-1) : 0)*plotW;
-      const yNorm = (dbArr[i]-yMin)/(yMax-yMin);
-      const y = padT + plotH*(1-Math.min(1,Math.max(0,yNorm)));
+      const x = xOf(s.freqs[i]), y = yOf(v[i]);
       if (i===0) ctx2d.moveTo(x,y); else ctx2d.lineTo(x,y);
     }
+    ctx2d.strokeStyle = s.useAvg ? C.avg : C.inst;
+    ctx2d.lineWidth = 1.6*dpr();
     ctx2d.stroke();
     ctx2d.lineTo(padL+plotW, padT+plotH);
     ctx2d.lineTo(padL, padT+plotH);
     ctx2d.closePath();
-    ctx2d.fillStyle = useAvg ? "rgba(246,173,85,0.14)" : "rgba(79,209,197,0.12)";
+    ctx2d.fillStyle = s.useAvg ? C.avgFill : C.instFill;
     ctx2d.fill();
 
-    drawPeakMarkers(box, (f) => (f < fLo || f > fHi) ? null : padL + ((f-fLo)/(fHi-fLo))*plotW);
+    drawPeakMarkers(box, (f) => (f < fLo || f > fHi) ? null : xOf(f));
   }
 
-  function drawOctave(useAvg){
-    const box = plotBox(40);
-    const { w, h, padL, padT, plotW, plotH } = box;
-    const dpr = window.devicePixelRatio || 1;
-    ctx2d.clearRect(0,0,w,h);
-    ctx2d.fillStyle = "#1e222b";
-    ctx2d.fillRect(0,0,w,h);
+  function drawOctave(s){
+    const box = plotBox(42);
+    const { padL, padT, plotW, plotH } = box;
+    const d = dpr();
+    const v = s.vals, nBands = v.length;
+    const ax = yAxis(v);
+    drawGridY(box, ax);
 
-    if (!hasData(useAvg)){ drawEmpty(useAvg ? "Time Average 수집 중..." : null); return; }
-
-    const sr = latestSampleRate;
-    const idxs = visibleOctaveIndices();
-    const dbs = octaveDbArray(idxs, sr, useAvg);
-    const [yMin,yMax] = niceRange(dbs);
-
-    drawGridY(box, yMin, yMax);
-
-    const nBands = idxs.length;
     const slot = plotW/nBands;
-    const gap = slot*0.18;
+    const gap = slot*0.2;
     const bw = slot - gap;
-    const labelEvery = nBands > 16 ? 2 : 1;
+    const labelEvery = slot < 11*d ? 2 : 1;
 
-    ctx2d.font = px(12);
     for (let b=0;b<nBands;b++){
       const x0 = padL + b*slot + gap/2;
-      const yNorm = (dbs[b]-yMin)/(yMax-yMin);
-      const yTop = padT + plotH*(1-Math.min(1,Math.max(0,yNorm)));
-      ctx2d.fillStyle = useAvg ? "#f6ad55" : "#4fd1c5";
+      const yTop = padT + plotH*(1-Math.min(1,Math.max(0,(v[b]-ax.lo)/(ax.hi-ax.lo))));
+      ctx2d.fillStyle = s.useAvg ? C.avg : C.inst;
       ctx2d.fillRect(x0, yTop, bw, padT+plotH-yTop);
-
-      if (b % labelEvery === 0){
-        const fc = THIRD_OCTAVE_CENTERS[idxs[b]];
-        const label = fc>=1000 ? (fc/1000)+"k" : String(fc);
-        ctx2d.save();
-        ctx2d.fillStyle = "#c3cad6";
-        ctx2d.translate(x0+bw/2, padT+plotH+8*dpr);
-        ctx2d.rotate(-Math.PI/3);
-        ctx2d.textAlign = "right";
-        ctx2d.textBaseline = "middle";
-        ctx2d.fillText(label, 0, 0);
-        ctx2d.restore();
-      }
     }
 
+    // vertical band labels
+    ctx2d.font = px(12, "600");
+    ctx2d.fillStyle = C.label;
+    ctx2d.textAlign = "right";
+    ctx2d.textBaseline = "middle";
+    for (let b=0;b<nBands;b++){
+      if (b % labelEvery !== 0) continue;
+      ctx2d.save();
+      ctx2d.translate(padL + b*slot + slot/2, padT + plotH + 5*d);
+      ctx2d.rotate(-Math.PI/2);
+      ctx2d.fillText(tickLabel(s.freqs[b]), 0, 0);
+      ctx2d.restore();
+    }
+    ctx2d.textBaseline = "alphabetic";
+
     drawPeakMarkers(box, (f) => {
-      const p = idxs.indexOf(THIRD_OCTAVE_CENTERS.indexOf(f));
+      const p = s.freqs.indexOf(f);
       return p < 0 ? null : padL + p*slot + slot/2;
     });
   }
 
   function drawEmpty(msg){
-    const w=canvas.width,h=canvas.height;
-    ctx2d.fillStyle="#9aa3b2";
-    ctx2d.font=px(16);
-    ctx2d.textAlign="center";
-    ctx2d.textBaseline="middle";
-    ctx2d.fillText(msg || "Start를 눌러 측정을 시작하세요", w/2, h/2);
-    ctx2d.textBaseline="alphabetic";
-  }
-
-  function drawGridY(box, yMin, yMax){
-    const { padL, padT, plotW, plotH } = box;
-    const dpr = window.devicePixelRatio || 1;
-    ctx2d.strokeStyle = "#2a2f3a";
-    ctx2d.lineWidth = 1;
-    ctx2d.fillStyle = "#c3cad6";
-    ctx2d.font = px(13);
-    ctx2d.textAlign = "right";
+    ctx2d.fillStyle = C.empty;
+    ctx2d.font = px(16, "500");
+    ctx2d.textAlign = "center";
     ctx2d.textBaseline = "middle";
-    const steps = 5;
-    for (let i=0;i<=steps;i++){
-      const v = yMin + (yMax-yMin)*(i/steps);
-      const y = padT + plotH*(1-i/steps);
-      ctx2d.beginPath();
-      ctx2d.moveTo(padL,y); ctx2d.lineTo(padL+plotW,y);
-      ctx2d.stroke();
-      ctx2d.fillText(v.toFixed(0), padL - 4*dpr, y);
-    }
-    ctx2d.textBaseline = "alphabetic";
-  }
-
-  function drawFreqAxisLinear(box, fLo, fHi){
-    const { padL, padT, plotW, plotH } = box;
-    const dpr = window.devicePixelRatio || 1;
-    ctx2d.fillStyle = "#c3cad6";
-    ctx2d.font = px(13);
-    ctx2d.textBaseline = "top";
-    const steps = 4;
-    for (let i=0;i<=steps;i++){
-      const f = fLo + (fHi-fLo)*(i/steps);
-      const x = padL + plotW*(i/steps);
-      const label = f>=1000 ? (f/1000).toFixed(1).replace(/\.0$/,"")+"k" : String(Math.round(f));
-      ctx2d.textAlign = i === 0 ? "left" : (i === steps ? "right" : "center");
-      ctx2d.fillText(label, x, padT+plotH+5*dpr);
-    }
+    ctx2d.fillText(msg, canvas.width/2, canvas.height/2);
     ctx2d.textBaseline = "alphabetic";
   }
 
   function updateStats(){
     const hiLabel = maxFreq>=1000 ? (maxFreq/1000)+"k" : maxFreq;
-    const rangeLabel = (LOW_FREQ + " Hz – " + hiLabel + " Hz") + (aWeight ? " · A" : "");
-    statsRangeLabel.textContent = rangeLabel;
+    statsRangeLabel.textContent = LOW_FREQ + " Hz – " + hiLabel + " Hz" + (aWeight ? " · A" : "");
 
-    if (levelHistory.length === 0){
+    const s = stats[mode][RANGE_OPTIONS.indexOf(maxFreq)];
+    if (s.count === 0){
       leqValue.textContent = "--"; lmaxValue.textContent = "--"; l10Value.textContent = "--";
       return;
     }
-    const rangeIdx = RANGE_OPTIONS.indexOf(maxFreq);
-    const field = mode;
-    const n = levelHistory.length;
-    const vals = new Float64Array(n);
-    let sum = 0, max = -Infinity;
-    for (let i=0;i<n;i++){
-      const v = levelHistory[i][field][rangeIdx];
-      vals[i] = v;
-      sum += v;
-      if (v > max) max = v;
-    }
-    const leqRaw = sum / n;
-    const sorted = Array.from(vals).sort((a,b) => a-b);
-    let idx = Math.ceil(0.9*sorted.length) - 1;
-    idx = Math.min(sorted.length-1, Math.max(0, idx));
-    const l10Raw = sorted[idx];
-
-    leqValue.textContent = leqRaw > 0 ? (10*Math.log10(leqRaw)+calibOffset).toFixed(1) : "--";
-    lmaxValue.textContent = max > 0 ? (10*Math.log10(max)+calibOffset).toFixed(1) : "--";
-    l10Value.textContent = l10Raw > 0 ? (10*Math.log10(l10Raw)+calibOffset).toFixed(1) : "--";
+    const toDb = (e) => e > 0 ? 10*Math.log10(e) + calibOffset : null;
+    const leq = toDb(s.sumE / s.count);
+    const lmax = toDb(s.maxE);
+    const l10r = l10Raw(s);
+    const l10 = l10r == null ? null : Math.min(l10r + calibOffset, lmax == null ? Infinity : lmax);
+    leqValue.textContent = leq == null ? "--" : leq.toFixed(1);
+    lmaxValue.textContent = lmax == null ? "--" : lmax.toFixed(1);
+    l10Value.textContent = l10 == null ? "--" : l10.toFixed(1);
   }
 
   function drawLoop(){
     resizeCanvas();
-    const useAvg = (viewMode === "avg");
-    if (mode === "narrow") drawNarrow(useAvg); else drawOctave(useAvg);
+    ctx2d.fillStyle = C.bg;
+    ctx2d.fillRect(0, 0, canvas.width, canvas.height);
+
+    const s = currentSeries();
+    if (!s){
+      drawEmpty(!running ? "Start를 눌러 측정을 시작하세요"
+               : (viewMode === "avg" ? "Time Average 수집 중..." : "데이터 수집 중..."));
+    } else if (mode === "narrow"){
+      drawNarrow(s);
+    } else {
+      drawOctave(s);
+    }
     updateStats();
-    if (running || latestAmps || avgCount>0) requestAnimationFrame(drawLoop);
+    if (running){
+      const elapsed = samplesDone / sampleRate;
+      setStatus("측정 중 · " + fmtTime(elapsed) + (timerSec > 0 ? " / " + fmtTime(timerSec) : ""), "ok");
+      refreshTimerBtn();
+      scheduleDraw();
+    }
+  }
+
+  function scheduleDraw(){
+    if (rafId !== null) return;
+    rafId = requestAnimationFrame(() => { rafId = null; drawLoop(); });
   }
 
   // ---------- UI wiring ----------
-  startStopBtn.addEventListener("click", () => {
-    if (!running) start(); else stop();
-  });
+  startStopBtn.addEventListener("click", () => { if (!running) start(); else stop(); });
 
   function setMode(m){
     mode = m;
     tabNarrow.classList.toggle("active", m==="narrow");
     tabOctave.classList.toggle("active", m==="octave");
-    refreshPeakBtnState();
-    if (!running){ drawLoop(); }
+    refreshPeakBtn();
+    scheduleDraw();
   }
   tabNarrow.addEventListener("click", () => setMode("narrow"));
   tabOctave.addEventListener("click", () => setMode("octave"));
@@ -808,47 +906,75 @@
     viewMode = v;
     viewInstant.classList.toggle("active", v==="instant");
     viewAvg.classList.toggle("active", v==="avg");
-    if (!running){ drawLoop(); }
+    refreshTimerBtn();
+    scheduleDraw();
   }
   viewInstant.addEventListener("click", () => setViewMode("instant"));
   viewAvg.addEventListener("click", () => setViewMode("avg"));
 
   peakBtn.addEventListener("click", () => {
-    const peak = getCurrentPeak();
-    if (!peak) return;
-    peakMarkers.push({ mode, freq: peak.freq, db: peak.db });
-    refreshPeakBtnState();
-    if (!running) drawLoop();
+    pickNextPeak();
+    refreshPeakBtn();
+    scheduleDraw();
   });
   peakClearBtn.addEventListener("click", () => {
-    peakMarkers = [];
-    refreshPeakBtnState();
-    if (!running) drawLoop();
+    peakMarkers = peakMarkers.filter(m => m.mode !== mode);
+    refreshPeakBtn();
+    scheduleDraw();
+  });
+  timerBtn.addEventListener("click", () => {
+    if (running) return;
+    timerSec = timerSec >= TIMER_MAX ? 0 : timerSec + TIMER_STEP;
+    refreshTimerBtn();
   });
 
   freqRangeSel.addEventListener("change", () => {
     maxFreq = parseInt(freqRangeSel.value, 10);
+    clearMarkers();
     const needed = fftSizeForRange(maxFreq);
     if (needed !== FFT_SIZE) applyFftSize(needed);
-    if (!running) drawLoop();
+    scheduleDraw();
   });
   aWeightChk.addEventListener("change", () => {
     aWeight = aWeightChk.checked;
-    resetHistory();
-    if (!running) drawLoop();
+    latestEnergy = null;
+    resetStats();
+    resetAverage();
+    clearMarkers();
+    scheduleDraw();
   });
+
+  function setCalib(v){
+    calibOffset = Math.round(v * 10) / 10;
+    calibInput.value = calibOffset;
+    scheduleDraw();
+  }
+  calDown.addEventListener("click", () => setCalib(calibOffset - 1));
+  calUp.addEventListener("click", () => setCalib(calibOffset + 1));
   calibInput.addEventListener("input", () => {
     const v = parseFloat(calibInput.value);
-    calibOffset = Number.isFinite(v) ? v : 0;
-    if (!running) drawLoop();
+    if (Number.isFinite(v)){ calibOffset = v; scheduleDraw(); }
   });
+  calibInput.addEventListener("blur", () => { calibInput.value = calibOffset; });
 
-  window.addEventListener("resize", () => { if(!running) drawLoop(); });
+  window.addEventListener("resize", scheduleDraw);
 
-  // initial paint
+  // release the mic when the user leaves the page or switches apps
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) return;
+    if (running) stop();
+    releaseAudio();
+  });
+  window.addEventListener("pagehide", releaseAudio);
+
+  // initial state
+  aWeightChk.checked = aWeight;
+  resetStats();
+  resetAverage();
   refreshDeltaFHint();
-  setMode("narrow");
-  drawLoop();
+  refreshPeakBtn();
+  refreshTimerBtn();
+  scheduleDraw();
 })();
 </script>
 </body>
