@@ -4,6 +4,23 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
 <title>Sound Level Meter for HCE</title>
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="icon" type="image/png" href="apple-touch-icon.png">
+<meta name="apple-mobile-web-app-title" content="SLM for HCE">
+<meta name="theme-color" content="#eef1f5">
+<script>
+  // Android/desktop only: the web app manifest (app-style install, HD icon).
+  // iOS keeps the plain home-screen bookmark so the mic permission behaves as before.
+  (function () {
+    var ua = navigator.userAgent;
+    var isIOS = /iPhone|iPad|iPod/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1);
+    if (!isIOS) {
+      var l = document.createElement("link");
+      l.rel = "manifest"; l.href = "manifest.webmanifest";
+      document.head.appendChild(l);
+    }
+  })();
+</script>
 <style>
   :root{
     --bg:#eef1f5; --ink:#0d1b2e; --muted:#5b6b80; --faint:#8a99ab;
@@ -25,7 +42,7 @@
             max(8px, env(safe-area-inset-bottom,0px)) max(14px, env(safe-area-inset-left,0px));
   }
   button{font-family:inherit;}
-  h1{font-size:27px;font-weight:800;margin:2px 0 0;letter-spacing:.2px;flex:none;line-height:1.15;}
+  h1{font-size:27px;font-weight:800;margin:8px 0 0;letter-spacing:.2px;flex:none;line-height:1.15;}
   h1 .for{font-size:.5em;font-weight:700;margin-left:5px;letter-spacing:.3px;color:var(--muted);}
 
   /* navy chart panel */
